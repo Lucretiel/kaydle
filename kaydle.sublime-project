@@ -1,0 +1,18 @@
+{
+	"folders":
+	[
+		{
+			"path": "."
+		}
+	],
+	"settings":
+	{
+		"LSP":
+		{
+			"rust-analyzer":
+			{
+				"enabled": true
+			}
+		}
+	}
+}
