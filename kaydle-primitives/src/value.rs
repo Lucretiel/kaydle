@@ -33,9 +33,9 @@ pub type RecognizedValue = GenericValue<(), ()>;
 
 impl<'a> KdlValue<'a> {
     /// Apply a KDL value to a visitor
-    pub fn visit_to<'de, V, E>(self, visitor: V) -> Result<V::Value, E>
+    pub fn visit_to<V, E>(self, visitor: V) -> Result<V::Value, E>
     where
-        V: de::Visitor<'de>,
+        V: de::Visitor<'a>,
         E: de::Error,
     {
         match self {

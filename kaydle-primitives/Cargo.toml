@@ -7,6 +7,7 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "0.7.1"
+derive_destructure = "1.0.0"
 memchr = "2.4.1"
 nom = "7.0.0"
 nom-supreme = "0.6.0"

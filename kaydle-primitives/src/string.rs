@@ -29,7 +29,7 @@ use crate::util::back;
 /// A KDL string, parsed from an identifier, escaped string, or raw string.
 /// Exists in either Owned or Borrowed form, depending on whether there were
 /// excapes in the string
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct KdlString<'a> {
     inner: Cow<'a, str>,
 }
@@ -60,15 +60,21 @@ impl<'a> KdlString<'a> {
     }
 
     /// Apply a KDL string to a visitor
-    pub fn visit_to<'de, V, E>(self, visitor: V) -> Result<V::Value, E>
+    pub fn visit_to<V, E>(self, visitor: V) -> Result<V::Value, E>
     where
-        V: de::Visitor<'de>,
+        V: de::Visitor<'a>,
         E: de::Error,
     {
         match self.inner {
-            Cow::Borrowed(value) => visitor.visit_str(value),
+            Cow::Borrowed(value) => visitor.visit_borrowed_str(value),
             Cow::Owned(value) => visitor.visit_string(value),
         }
+    }
+}
+
+impl<T: AsRef<str>> PartialEq<T> for KdlString<'_> {
+    fn eq(&self, other: &T) -> bool {
+        self.as_ref() == other.as_ref()
     }
 }
 
@@ -86,9 +92,15 @@ impl<'a> Deref for KdlString<'a> {
     }
 }
 
-impl<'a> DerefMut for KdlString<'a> {
+impl DerefMut for KdlString<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+impl AsRef<str> for KdlString<'_> {
+    fn as_ref(&self) -> &str {
+        self
     }
 }
 

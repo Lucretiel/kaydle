@@ -1,5 +1,6 @@
 use std::{char::CharTryFromError, num::ParseIntError};
 
+use derive_destructure::destructure;
 use nom::{
     branch::alt,
     character::complete::char,
@@ -11,9 +12,9 @@ use nom_supreme::{tag::TagError, ParserExt};
 
 use crate::{
     number::BoundsError,
-    property::{parse_property, GenericProperty},
+    property::{parse_property, GenericProperty, RecognizedProperty},
     string::{parse_identifier, StringBuilder},
-    value::{parse_value, KdlValue, ValueBuilder},
+    value::{parse_value, ValueBuilder},
     whitespace::{parse_linespace, parse_node_space, parse_node_terminator},
 };
 
@@ -35,7 +36,7 @@ enum ProcessorState<'i, 'p> {
 
 use ProcessorState::*;
 
-impl<'i> ProcessorState<'i, '_> {
+impl<'i, 'p> ProcessorState<'i, 'p> {
     fn get_input(&self) -> &'i str {
         match *self {
             Parent(&mut s) | Disconnected(s) => s,
@@ -53,8 +54,8 @@ impl<'i> ProcessorState<'i, '_> {
         run_parser_on(self.get_input_mut(), parser)
     }
 
-    pub fn child<'s>(&'s mut self) -> ProcessorState<'i, 's> {
-        ProcessorState::Parent(self.get_input_mut())
+    fn merge_into(self, original: &mut Self) {
+        *original.get_input_mut() = self.get_input()
     }
 }
 
@@ -86,8 +87,9 @@ where
 
 /// Trait for types that can parse a node list. Abstracts over a node document
 /// processor, which operates at the top level, and a node children processor,
-/// which is nested
-pub trait NodeListProcessor<'i, 'p> {
+/// which is nested in `{ }`
+pub trait NodeListProcessor<'i, 'p>: Sized {
+    /// Get the next node. Returns the node name and a processor
     fn next_node<'s, T, E>(&'s mut self) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
     where
         T: StringBuilder<'i>,
@@ -96,9 +98,25 @@ pub trait NodeListProcessor<'i, 'p> {
         E: FromExternalError<&'i str, ParseIntError>,
         E: FromExternalError<&'i str, CharTryFromError>,
         E: ContextError<&'i str>;
+
+    fn drain<E>(mut self) -> Result<(), NomErr<E>>
+    where
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, ParseIntError>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: FromExternalError<&'i str, BoundsError>,
+        E: ContextError<&'i str>,
+    {
+        while let Some(((), node)) = self.next_node()? {
+            node.drain()?;
+        }
+
+        Ok(())
+    }
 }
 
-/// Processor for a top level node document. Use `next_node` to
+/// Processor for a top level kdl document.
 #[derive(Debug, Clone)]
 pub struct NodeDocumentProcessor<'i> {
     state: &'i str,
@@ -169,10 +187,14 @@ where
     alt((
         // Parse a value or property, preceded by 1 or more whitespace
         alt((
-            parse_value.map(InternalNodeEvent::Value).context("value"),
+            // Important: make sure to try to parse a property first, since
+            // "abc"=10 could be conservatively parsed as just the value "abc"
+            // TODO: try to parse a value first, and if it's a string, try to
+            // parse =value (in other words, avoid duplicating the string parse)
             parse_property
                 .map(InternalNodeEvent::Property)
                 .context("property"),
+            parse_value.map(InternalNodeEvent::Value).context("value"),
         ))
         // Parse children or a node terminator, preceded by 0 or more whitespace
         .preceded_by(parse_node_space),
@@ -187,18 +209,39 @@ where
     .parse(input)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, destructure)]
 pub struct NodeProcessor<'i, 'p> {
     state: ProcessorState<'i, 'p>,
 }
 
 impl<'i, 'p> NodeProcessor<'i, 'p> {
-    pub fn child<'s>(&'s mut self) -> NodeProcessor<'i, 's> {
-        NodeProcessor {
-            state: self.state.child(),
-        }
+    pub fn merge_into(self, original: &mut Self) {
+        let (state,) = self.destructure();
+        state.merge_into(&mut original.state)
     }
 
+    // Parse and discard everything in this node
+    pub fn drain<E>(mut self) -> Result<(), NomErr<E>>
+    where
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, ParseIntError>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: FromExternalError<&'i str, BoundsError>,
+        E: ContextError<&'i str>,
+    {
+        loop {
+            self = match self.next_event()? {
+                NodeEvent::Value((), next) => next,
+                NodeEvent::Property(RecognizedProperty { .. }, next) => next,
+                NodeEvent::Children(children) => break children.drain(),
+                NodeEvent::End => break Ok(()),
+            }
+        }
+    }
+}
+
+impl<'i, 'p> NodeProcessor<'i, 'p> {
     pub fn next_event<V, K, P, E>(mut self) -> Result<NodeEvent<'i, 'p, V, K, P>, NomErr<E>>
     where
         V: ValueBuilder<'i>,
@@ -216,35 +259,24 @@ impl<'i, 'p> NodeProcessor<'i, 'p> {
             .map(move |event| match event {
                 InternalNodeEvent::Value(value) => NodeEvent::Value(value, self),
                 InternalNodeEvent::Property(prop) => NodeEvent::Property(prop, self),
-                InternalNodeEvent::Children => {
-                    NodeEvent::Children(NodeChildrenProcessor { state: self.state })
-                }
+                InternalNodeEvent::Children => NodeEvent::Children(NodeChildrenProcessor {
+                    state: self.destructure().0,
+                }),
                 InternalNodeEvent::End => NodeEvent::End,
             })
     }
+}
 
-    pub fn next_recognized_event<E>(self) -> Result<NodeEvent<'i, 'p, (), (), ()>, NomErr<E>>
-    where
-        E: ParseError<&'i str>,
-        E: TagError<&'i str, &'static str>,
-        E: FromExternalError<&'i str, ParseIntError>,
-        E: FromExternalError<&'i str, CharTryFromError>,
-        E: FromExternalError<&'i str, BoundsError>,
-        E: ContextError<&'i str>,
-    {
-        self.next_event()
-    }
-
-    pub fn next_value<E>(self) -> Result<NodeEvent<'i, 'p, KdlValue<'i>, (), ()>, NomErr<E>>
-    where
-        E: ParseError<&'i str>,
-        E: TagError<&'i str, &'static str>,
-        E: FromExternalError<&'i str, ParseIntError>,
-        E: FromExternalError<&'i str, CharTryFromError>,
-        E: FromExternalError<&'i str, BoundsError>,
-        E: ContextError<&'i str>,
-    {
-        self.next_event()
+impl<'i, 'p> Drop for NodeProcessor<'i, 'p> {
+    fn drop(&mut self) {
+        // Disconnected NodeProcessors come from clone + peek pattern, and
+        // therefore don't need to be fully consumed.
+        if let Parent(..) = self.state {
+            panic!(
+                "Dropped a kaydle::NodeProcessor before completing it. Node \
+                processors must be fully consumed with `next_event`."
+            )
+        }
     }
 }
 
@@ -269,7 +301,7 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
                 Some(node_name) => Some((
                     node_name,
                     NodeProcessor {
-                        state: self.state.child(),
+                        state: ProcessorState::Parent(self.state.get_input_mut()),
                     },
                 )),
                 None => {
@@ -277,5 +309,19 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
                     None
                 }
             })
+    }
+}
+
+impl<'i, 'p> NodeListProcessor<'i, 'p> for &mut NodeChildrenProcessor<'i, 'p> {
+    fn next_node<'s, T, E>(&'s mut self) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
+    where
+        T: StringBuilder<'i>,
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, ParseIntError>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: ContextError<&'i str>,
+    {
+        NodeChildrenProcessor::next_node(self)
     }
 }
