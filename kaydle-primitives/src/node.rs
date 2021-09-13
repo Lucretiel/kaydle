@@ -13,7 +13,7 @@ use crate::{
     number::BoundsError,
     property::{parse_property, GenericProperty},
     string::{parse_identifier, StringBuilder},
-    value::{parse_value, ValueBuilder},
+    value::{parse_value, KdlValue, ValueBuilder},
     whitespace::{parse_linespace, parse_node_space, parse_node_terminator},
 };
 
@@ -52,6 +52,10 @@ impl<'i> ProcessorState<'i, '_> {
     fn run_parser<O, E>(&mut self, parser: impl Parser<&'i str, O, E>) -> Result<O, NomErr<E>> {
         run_parser_on(self.get_input_mut(), parser)
     }
+
+    pub fn child<'s>(&'s mut self) -> ProcessorState<'i, 's> {
+        ProcessorState::Parent(self.get_input_mut())
+    }
 }
 
 impl<'i, 'p> Clone for ProcessorState<'i, 'p> {
@@ -80,10 +84,11 @@ where
         .preceded_by(parse_linespace)
 }
 
+/// Trait for types that can parse a node list. Abstracts over a node document
+/// processor, which operates at the top level, and a node children processor,
+/// which is nested
 pub trait NodeListProcessor<'i, 'p> {
-    fn next_node<'s: 'p, T, E>(
-        &'s mut self,
-    ) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
+    fn next_node<'s, T, E>(&'s mut self) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
     where
         T: StringBuilder<'i>,
         E: ParseError<&'i str>,
@@ -93,7 +98,7 @@ pub trait NodeListProcessor<'i, 'p> {
         E: ContextError<&'i str>;
 }
 
-/// Get a series of nodes with this
+/// Processor for a top level node document. Use `next_node` to
 #[derive(Debug, Clone)]
 pub struct NodeDocumentProcessor<'i> {
     state: &'i str,
@@ -110,9 +115,7 @@ impl<'i> NodeDocumentProcessor<'i> {
 }
 
 impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeDocumentProcessor<'i> {
-    fn next_node<'s: 'p, T, E>(
-        &'s mut self,
-    ) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
+    fn next_node<'s, T, E>(&'s mut self) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
     where
         T: StringBuilder<'i>,
         E: ParseError<&'i str>,
@@ -190,6 +193,12 @@ pub struct NodeProcessor<'i, 'p> {
 }
 
 impl<'i, 'p> NodeProcessor<'i, 'p> {
+    pub fn child<'s>(&'s mut self) -> NodeProcessor<'i, 's> {
+        NodeProcessor {
+            state: self.state.child(),
+        }
+    }
+
     pub fn next_event<V, K, P, E>(mut self) -> Result<NodeEvent<'i, 'p, V, K, P>, NomErr<E>>
     where
         V: ValueBuilder<'i>,
@@ -213,6 +222,30 @@ impl<'i, 'p> NodeProcessor<'i, 'p> {
                 InternalNodeEvent::End => NodeEvent::End,
             })
     }
+
+    pub fn next_recognized_event<E>(self) -> Result<NodeEvent<'i, 'p, (), (), ()>, NomErr<E>>
+    where
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, ParseIntError>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: FromExternalError<&'i str, BoundsError>,
+        E: ContextError<&'i str>,
+    {
+        self.next_event()
+    }
+
+    pub fn next_value<E>(self) -> Result<NodeEvent<'i, 'p, KdlValue<'i>, (), ()>, NomErr<E>>
+    where
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, ParseIntError>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: FromExternalError<&'i str, BoundsError>,
+        E: ContextError<&'i str>,
+    {
+        self.next_event()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -221,9 +254,7 @@ pub struct NodeChildrenProcessor<'i, 'p> {
 }
 
 impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
-    fn next_node<'s: 'p, T, E>(
-        &'s mut self,
-    ) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
+    fn next_node<'s, T, E>(&'s mut self) -> Result<Option<(T, NodeProcessor<'i, 's>)>, NomErr<E>>
     where
         T: StringBuilder<'i>,
         E: ParseError<&'i str>,
@@ -238,7 +269,7 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
                 Some(node_name) => Some((
                     node_name,
                     NodeProcessor {
-                        state: Parent(self.state.get_input_mut()),
+                        state: self.state.child(),
                     },
                 )),
                 None => {

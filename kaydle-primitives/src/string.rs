@@ -55,6 +55,10 @@ impl<'a> KdlString<'a> {
         self.inner.into_owned()
     }
 
+    pub fn as_str(&self) -> &str {
+        self
+    }
+
     /// Apply a KDL string to a visitor
     pub fn visit_to<'de, V, E>(self, visitor: V) -> Result<V::Value, E>
     where
@@ -106,25 +110,14 @@ impl<'a, 'b> Extend<&'b char> for KdlString<'a> {
     }
 }
 
-impl<'a> FromIterator<&'a str> for KdlString<'a> {
-    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
+impl<T> FromIterator<T> for KdlString<'_>
+where
+    Self: Extend<T>,
+{
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut string = KdlString::new();
         string.extend(iter);
         string
-    }
-}
-
-impl FromIterator<char> for KdlString<'_> {
-    fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
-        let mut string = KdlString::new();
-        string.extend(iter);
-        string
-    }
-}
-
-impl<'a, 'b> FromIterator<&'b char> for KdlString<'a> {
-    fn from_iter<T: IntoIterator<Item = &'b char>>(iter: T) -> Self {
-        iter.into_iter().copied().collect()
     }
 }
 

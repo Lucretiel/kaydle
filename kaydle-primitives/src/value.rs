@@ -181,30 +181,6 @@ impl ValueBuilder<'_> for () {
     fn from_string(_value: Self::String) {}
 }
 
-impl<'a, T> ValueBuilder<'a> for Option<T>
-where
-    T: ValueBuilder<'a>,
-{
-    type Number = T::Number;
-    type String = T::String;
-
-    fn from_null() -> Self {
-        None
-    }
-
-    fn from_bool(value: bool) -> Self {
-        Some(T::from_bool(value))
-    }
-
-    fn from_number(value: Self::Number) -> Self {
-        Some(T::from_number(value))
-    }
-
-    fn from_string(value: Self::String) -> Self {
-        Some(T::from_string(value))
-    }
-}
-
 pub fn parse_value<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
 where
     T: ValueBuilder<'i>,
