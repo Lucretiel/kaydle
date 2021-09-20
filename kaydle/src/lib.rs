@@ -1,1 +1,1 @@
-mod serde;
+pub mod serde;

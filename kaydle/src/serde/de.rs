@@ -1,25 +1,37 @@
+mod helper_deserializers;
+
 use std::{
-    fmt::{self, Display, Formatter},
+    fmt::Display,
     mem::{self},
 };
 
 use kaydle_primitives::{
-    node::{NodeChildrenProcessor, NodeEvent, NodeListProcessor, NodeProcessor},
+    node::{
+        NodeChildrenProcessor, NodeDocumentProcessor, NodeEvent, NodeListProcessor, NodeProcessor,
+    },
     property::{Property, RecognizedProperty},
-    string::{KdlString, StringBuilder},
+    string::KdlString,
     value::{KdlValue, RecognizedValue},
 };
 use nom::Err as NomErr;
 use serde::{
     de::{
-        self, value::SeqAccessDeserializer, EnumAccess, IntoDeserializer, MapAccess, SeqAccess,
-        Unexpected, VariantAccess, Visitor,
+        self,
+        value::{MapAccessDeserializer, SeqAccessDeserializer},
+        IntoDeserializer, MapAccess, SeqAccess,
     },
-    forward_to_deserialize_any, Deserialize, Deserializer,
+    forward_to_deserialize_any,
 };
 use thiserror::Error;
 
 use crate::serde::magic;
+use helper_deserializers::{EmptyDeserializer, StringDeserializer, ValueDeserializer};
+
+pub fn deserializer(document: &str) -> NodeListDeserializer<NodeDocumentProcessor<'_>> {
+    NodeListDeserializer {
+        processor: NodeDocumentProcessor::new(document),
+    }
+}
 
 /// Deserializer for deserializing a Node list (such as a document or children).
 /// Generally can only be used to deserialize sequences (maps, seqs, etc).
@@ -504,7 +516,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
 
     fn deserialize_unit_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -515,7 +527,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -539,6 +551,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
                 let mut values = ValuesSeqAccess {
                     first: Some(value),
                     processor: Some(processor),
+                    skip_rule: UnexpectedIsError,
                 };
 
                 let result = visitor.visit_seq(&mut values)?;
@@ -594,9 +607,10 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
             NodeEvent::Value((), ..) => Err(Error::UnexpectedValue),
             NodeEvent::Property(property, processor) => {
                 let mut map = PropertiesMapAccess {
-                    key: Some(property.key),
+                    first_key: Some(property.key),
                     value: Some(property.value),
                     processor: Some(processor),
+                    skip_rule: UnexpectedIsError,
                 };
 
                 let result = visitor.visit_map(&mut map)?;
@@ -652,77 +666,135 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     }
 }
 
-/// Deserialize a plain list of values into a sequence (like a Vec). Other
-/// events (properties, children) are errors.
-struct ValuesSeqAccess<'p, 'de> {
-    first: Option<KdlValue<'de>>,
-    processor: Option<NodeProcessor<'de, 'p>>,
+trait Unexpected<'p, 'de> {
+    fn value() -> Result<(), Error>;
+    fn property() -> Result<(), Error>;
+    fn children(children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error>;
 }
 
-impl<'p, 'de> SeqAccess<'de> for &mut ValuesSeqAccess<'p, 'de> {
+struct UnexpectedIsError;
+
+impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedIsError {
+    #[inline]
+    fn value() -> Result<(), Error> {
+        Err(Error::UnexpectedValue)
+    }
+
+    #[inline]
+    fn property() -> Result<(), Error> {
+        Err(Error::UnexpectedProperty)
+    }
+
+    #[inline]
+    fn children(_children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
+        Err(Error::UnexpectedChildren)
+    }
+}
+
+struct UnexpectedPermissive;
+
+impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedPermissive {
+    fn value() -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn property() -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn children(_children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
+        // In this case we don't consume children, on the assumption that this
+        // is being used in a forked processor
+        Ok(())
+    }
+}
+
+/// Deserialize a plain list of values into a sequence (like a Vec).
+struct ValuesSeqAccess<'p, 'de, U: Unexpected<'p, 'de>> {
+    first: Option<KdlValue<'de>>,
+    processor: Option<NodeProcessor<'de, 'p>>,
+    skip_rule: U,
+}
+
+impl<'p, 'de, U: Unexpected<'p, 'de>> SeqAccess<'de> for &mut ValuesSeqAccess<'p, 'de, U> {
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
     where
         T: de::DeserializeSeed<'de>,
     {
-        match self.first.take() {
-            Some(value) => seed.deserialize(ValueDeserializer { value }).map(Some),
-            None => match self.processor.take() {
-                None => Ok(None),
-                Some(processor) => {
-                    match processor.next_event().map_err(Error::from_parse_error)? {
-                        NodeEvent::Value(value, processor) => {
-                            self.processor = Some(processor);
-                            seed.deserialize(ValueDeserializer { value }).map(Some)
+        loop {
+            break match self.first.take() {
+                Some(value) => seed.deserialize(ValueDeserializer::new(value)).map(Some),
+                None => match self.processor.take() {
+                    None => Ok(None),
+                    Some(processor) => {
+                        match processor.next_event().map_err(Error::from_parse_error)? {
+                            NodeEvent::Value(value, processor) => {
+                                self.processor = Some(processor);
+                                seed.deserialize(ValueDeserializer::new(value)).map(Some)
+                            }
+                            NodeEvent::Property(RecognizedProperty { .. }, processor) => {
+                                self.processor = Some(processor);
+                                U::property()?;
+                                continue;
+                            }
+                            NodeEvent::Children(children) => {
+                                U::children(children)?;
+                                Ok(None)
+                            }
+                            NodeEvent::End => Ok(None),
                         }
-                        NodeEvent::Property(RecognizedProperty { .. }, ..) => {
-                            Err(Error::UnexpectedProperty)
-                        }
-                        NodeEvent::Children(..) => Err(Error::UnexpectedChildren),
-                        NodeEvent::End => Ok(None),
                     }
-                }
-            },
+                },
+            };
         }
     }
 }
 
 /// Deserialize a plain list of properties into a map (like a HashMap). Other
 /// events (values, children) are errors.
-struct PropertiesMapAccess<'p, 'de> {
-    key: Option<KdlString<'de>>,
+struct PropertiesMapAccess<'p, 'de, U: Unexpected<'p, 'de>> {
+    first_key: Option<KdlString<'de>>,
     value: Option<KdlValue<'de>>,
     processor: Option<NodeProcessor<'de, 'p>>,
+    skip_rule: U,
 }
 
-impl<'de> MapAccess<'de> for PropertiesMapAccess<'_, 'de> {
+impl<'p, 'de, U: Unexpected<'p, 'de>> MapAccess<'de> for PropertiesMapAccess<'p, 'de, U> {
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
     where
         K: de::DeserializeSeed<'de>,
     {
-        match self.key.take() {
-            Some(key) => seed
-                .deserialize(StringDeserializer { value: key })
-                .map(Some),
-            None => match self.processor.take() {
-                None => Ok(None),
-                Some(processor) => match processor.next_event().map_err(Error::from_parse_error)? {
-                    NodeEvent::Property(property, processor) => {
-                        self.processor = Some(processor);
-                        self.value = Some(property.value);
-                        seed.deserialize(StringDeserializer {
-                            value: property.key,
-                        })
-                        .map(Some)
+        loop {
+            break match self.first_key.take() {
+                Some(key) => seed.deserialize(StringDeserializer::new(key)).map(Some),
+                None => match self.processor.take() {
+                    None => Ok(None),
+                    Some(processor) => {
+                        match processor.next_event().map_err(Error::from_parse_error)? {
+                            NodeEvent::Property(property, processor) => {
+                                self.processor = Some(processor);
+                                self.value = Some(property.value);
+                                seed.deserialize(StringDeserializer::new(property.key))
+                                    .map(Some)
+                            }
+                            NodeEvent::Value((), processor) => {
+                                self.processor = Some(processor);
+                                U::value()?;
+                                continue;
+                            }
+                            NodeEvent::Children(children) => {
+                                U::children(children)?;
+                                Ok(None)
+                            }
+                            NodeEvent::End => Ok(None),
+                        }
                     }
-                    NodeEvent::Value((), ..) => Err(Error::UnexpectedValue),
-                    NodeEvent::Children(..) => Err(Error::UnexpectedChildren),
-                    NodeEvent::End => Ok(None),
                 },
-            },
+            };
         }
     }
 
@@ -730,27 +802,50 @@ impl<'de> MapAccess<'de> for PropertiesMapAccess<'_, 'de> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        seed.deserialize(ValueDeserializer {
-            value: self
-                .value
+        seed.deserialize(ValueDeserializer::new(
+            self.value
                 .take()
                 .expect("called next_value_seed out of order"),
-        })
+        ))
     }
 }
 
 enum NextValue<'p, 'de> {
     // A value for a property
-    Value(KdlValue<'de>),
+    Single(KdlValue<'de>, NodeProcessor<'de, 'p>),
 
     // The first in a series of values that need to be collected
-    Argument(KdlValue<'de>),
+    Value(KdlValue<'de>, NodeProcessor<'de, 'p>),
 
     // The first in a series of properties that need to be collected
-    Property(Property<'de>),
+    Property(Property<'de>, NodeProcessor<'de, 'p>),
 
     // The children that need to be collected
     Children(NodeChildrenProcessor<'de, 'p>),
+}
+
+enum MapAccessState<'p, 'de> {
+    Key(NodeProcessor<'de, 'p>),
+    Value(NextValue<'p, 'de>),
+    Empty,
+}
+
+impl MapAccessState<'_, '_> {
+    fn take(&mut self) -> Self {
+        mem::replace(self, MapAccessState::Empty)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectRule {
+    /// Don't collect entities of this type
+    Dont,
+
+    /// Do collect entities of this type
+    Do,
+
+    /// We've collected all the things and can skip these entities
+    Done,
 }
 
 /// MapAccess type specifically for turning a node into a struct based on its
@@ -762,21 +857,16 @@ struct SimpleStructMapAccess<'p, 'de> {
     fields: Vec<Option<&'static str>>,
 
     // Collect values into a single field called kdl::values
-    collect_values: bool,
+    collect_values: CollectRule,
 
     // Collect properties into a single field called kdl::properties
-    collect_properties: bool,
+    collect_properties: CollectRule,
 
     // Collect children into a single field called kdl::children
     collect_children: bool,
 
-    // The next value that needs to be parsed during next_value_seed.
-    next_value: Option<NextValue<'p, 'de>>,
-
-    processor: Option<NodeProcessor<'de, 'p>>,
+    state: MapAccessState<'p, 'de>,
 }
-
-enum NodeTailBuffer {}
 
 impl SimpleStructMapAccess<'_, '_> {
     fn take_next_unused_field(&mut self) -> Option<&'static str> {
@@ -797,53 +887,99 @@ impl<'de> MapAccess<'de> for &mut SimpleStructMapAccess<'_, 'de> {
     where
         K: de::DeserializeSeed<'de>,
     {
-        match self.processor.take() {
-            None => Ok(None),
-            Some(processor) => match processor.next_event().map_err(Error::from_parse_error)? {
-                NodeEvent::Value(value, processor) => {
-                    self.processor = Some(processor);
+        use CollectRule::*;
 
-                    if self.collect_values {
-                        self.next_value = Some(NextValue::Argument(value));
-                        seed.deserialize(magic::NODE_VALUES_ID.into_deserializer())
-                            .map(Some)
-                    } else {
-                        match self.take_next_unused_field() {
-                            None => Err(Error::UnexpectedValue),
-                            Some(key) => {
-                                self.next_value = Some(NextValue::Value(value));
-                                seed.deserialize(key.into_deserializer()).map(Some)
+        match loop {
+            match self.state.take() {
+                MapAccessState::Empty => return Ok(None),
+                MapAccessState::Value(..) => panic!("Called next_key_seed out of order"),
+                MapAccessState::Key(processor) => {
+                    break match (self.collect_properties, self.collect_values) {
+                        (Done, Done) => {
+                            match processor.next_event().map_err(Error::from_parse_error)? {
+                                NodeEvent::Value((), processor)
+                                | NodeEvent::Property(RecognizedProperty { .. }, processor) => {
+                                    self.state = MapAccessState::Key(processor);
+                                    continue;
+                                }
+                                NodeEvent::Children(processor) => {
+                                    break NodeEvent::Children(processor)
+                                }
+                                NodeEvent::End => NodeEvent::End,
                             }
                         }
+                        (Done, _) => {
+                            match processor.next_event().map_err(Error::from_parse_error)? {
+                                NodeEvent::Value(value, processor) => {
+                                    NodeEvent::Value(value, processor)
+                                }
+                                NodeEvent::Property(RecognizedProperty { .. }, processor) => {
+                                    self.state = MapAccessState::Key(processor);
+                                    continue;
+                                }
+                                NodeEvent::Children(processor) => NodeEvent::Children(processor),
+                                NodeEvent::End => NodeEvent::End,
+                            }
+                        }
+                        (_, Done) => {
+                            match processor.next_event().map_err(Error::from_parse_error)? {
+                                NodeEvent::Value((), processor) => {
+                                    self.state = MapAccessState::Key(processor);
+                                    continue;
+                                }
+                                NodeEvent::Property(property, processor) => {
+                                    NodeEvent::Property(property, processor)
+                                }
+                                NodeEvent::Children(processor) => NodeEvent::Children(processor),
+                                NodeEvent::End => NodeEvent::End,
+                            }
+                        }
+                        (_, _) => processor.next_event().map_err(Error::from_parse_error)?,
                     }
                 }
-                NodeEvent::Property(property, processor) => {
-                    self.processor = Some(processor);
-
-                    if self.collect_properties {
-                        self.next_value = Some(NextValue::Property(property));
-                        seed.deserialize(magic::NODE_PROPERTIES_ID.into_deserializer())
-                            .map(Some)
-                    } else {
-                        self.next_value = Some(NextValue::Value(property.value));
-                        self.take_field(&property.key);
-                        seed.deserialize(StringDeserializer {
-                            value: property.key,
-                        })
+            }
+        } {
+            NodeEvent::Value(value, processor) => match self.collect_values {
+                Do => {
+                    self.state = MapAccessState::Value(NextValue::Value(value, processor));
+                    seed.deserialize(magic::NODE_VALUES_ID.into_deserializer())
                         .map(Some)
-                    }
                 }
-                NodeEvent::Children(children) => {
-                    if self.collect_children {
-                        self.next_value = Some(NextValue::Children(children));
-                        seed.deserialize(magic::NODE_CHILDREN_ID.into_deserializer())
-                            .map(Some)
-                    } else {
-                        Err(Error::UnexpectedChildren)
+                Dont => match self.take_next_unused_field() {
+                    None => Err(Error::UnexpectedValue),
+                    Some(key) => {
+                        self.state = MapAccessState::Value(NextValue::Single(value, processor));
+                        seed.deserialize(key.into_deserializer()).map(Some)
                     }
-                }
-                NodeEvent::End => Ok(None),
+                },
+                Done => unreachable!(),
             },
+            NodeEvent::Property(property, processor) => match self.collect_properties {
+                Do => {
+                    self.state = MapAccessState::Value(NextValue::Property(property, processor));
+                    seed.deserialize(magic::NODE_PROPERTIES_ID.into_deserializer())
+                        .map(Some)
+                }
+                Dont => {
+                    self.state =
+                        MapAccessState::Value(NextValue::Single(property.value, processor));
+                    self.take_field(&property.key);
+                    seed.deserialize(StringDeserializer::new(property.key))
+                        .map(Some)
+                }
+
+                Done => unreachable!(),
+            },
+            NodeEvent::Children(children) => {
+                if self.collect_children {
+                    self.state = MapAccessState::Value(NextValue::Children(children));
+                    seed.deserialize(magic::NODE_CHILDREN_ID.into_deserializer())
+                        .map(Some)
+                } else {
+                    Err(Error::UnexpectedChildren)
+                }
+            }
+            NodeEvent::End => Ok(None),
         }
     }
 
@@ -851,31 +987,64 @@ impl<'de> MapAccess<'de> for &mut SimpleStructMapAccess<'_, 'de> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        match self
-            .next_value
-            .take()
-            .expect("called next_value_seed out of order")
-        {
+        match match self.state.take() {
+            MapAccessState::Empty | MapAccessState::Key(..) => {
+                panic!("called next_value_seed out of order")
+            }
+            MapAccessState::Value(next_value) => next_value,
+        } {
             // Expecting a simple value as part of a single property
-            NextValue::Value(value) => seed.deserialize(ValueDeserializer { value }),
+            NextValue::Single(value, processor) => {
+                self.state = MapAccessState::Key(processor);
+                seed.deserialize(ValueDeserializer::new(value))
+            }
 
             // Expecting to deserialize a seq of values
-            NextValue::Argument(value) => {
+            NextValue::Value(value, processor) => {
+                let lookahead_processor = processor.clone();
+                self.state = MapAccessState::Key(processor);
+                self.collect_values = CollectRule::Done;
+
                 // TODO: use a common re-shared buffer
-                let mut collector = SimpleStructValuesCollector {
+                let mut seq = ValuesSeqAccess {
                     first: Some(value),
-                    processor: self.processor.take(),
-                    properties_buffer: PropertiesBuffer::Empty,
-                    children_buffer: None,
+                    processor: Some(lookahead_processor),
+                    skip_rule: UnexpectedPermissive,
                 };
 
-                let result = seed.deserialize(SeqAccessDeserializer::new(&mut collector));
+                let result = seed.deserialize(SeqAccessDeserializer::new(&mut seq));
 
-                todo!("Cleanup: check buffers etc");
+                // Verify that the child deserializer consumed the whole node
+                if let Some(processor) = seq.processor {
+                    expect_node_completed(processor)?;
+                }
+
+                result
             }
 
             // Expecting to deserialize a map of properties
-            NextValue::Property(_) => todo!(),
+            NextValue::Property(property, processor) => {
+                let lookahead_processor = processor.clone();
+                self.state = MapAccessState::Key(processor);
+                self.collect_properties = CollectRule::Done;
+
+                // TODO: use a common re-shared buffer
+                let mut seq = PropertiesMapAccess {
+                    first_key: Some(property.key),
+                    value: Some(property.value),
+                    processor: Some(lookahead_processor),
+                    skip_rule: UnexpectedPermissive,
+                };
+
+                let result = seed.deserialize(MapAccessDeserializer::new(&mut seq));
+
+                // Verify that the child deserializer consumed the whole node
+                if let Some(processor) = seq.processor {
+                    expect_node_completed(processor)?;
+                }
+
+                result
+            }
 
             // Expecting to deserialize a bunch of children.
             NextValue::Children(mut children) => {
@@ -889,303 +1058,5 @@ impl<'de> MapAccess<'de> for &mut SimpleStructMapAccess<'_, 'de> {
                 }
             }
         }
-    }
-}
-
-enum EntityBuffer<T> {
-    Empty,
-    Single(T),
-    Buffered(Vec<T>),
-}
-
-impl<T> EntityBuffer<T> {
-    fn take(&mut self) -> Self {
-        mem::replace(self, Self::Empty)
-    }
-
-    /// Add a new item to the buffer. Returns true if this was the first item.
-    fn add(&mut self, item: T) -> bool {
-        match self.take() {
-            Self::Empty => {
-                *self = Self::Single(item);
-                true
-            }
-            Self::Single(first) => {
-                *self = Self::Buffered(vec![first, item]);
-                false
-            }
-            Self::Buffered(mut buf) => {
-                buf.push(item);
-                *self = Self::Buffered(buf);
-                false
-            }
-        }
-    }
-}
-
-type PropertiesBuffer<'a> = EntityBuffer<Property<'a>>;
-type ValuesBuffer<'a> = EntityBuffer<KdlValue<'a>>;
-
-struct SimpleStructValuesCollector<'p, 'de> {
-    first: Option<KdlValue<'de>>,
-    processor: Option<NodeProcessor<'de, 'p>>,
-    properties_buffer: PropertiesBuffer<'de>,
-    children_buffer: Option<NodeChildrenProcessor<'de, 'p>>,
-}
-
-impl<'p, 'de> SeqAccess<'de> for &mut SimpleStructValuesCollector<'p, 'de> {
-    type Error = Error;
-
-    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
-    where
-        T: de::DeserializeSeed<'de>,
-    {
-        match self.first.take() {
-            Some(value) => seed.deserialize(ValueDeserializer { value }).map(Some),
-            None => match self.processor.take() {
-                None => Ok(None),
-                Some(processor) => match processor.next_event().map_err(Error::from_parse_error)? {
-                    NodeEvent::Value(value, processor) => {
-                        self.processor = Some(processor);
-                        seed.deserialize(ValueDeserializer { value }).map(Some)
-                    }
-                    NodeEvent::Property(property, processor) => {
-                        self.processor = Some(processor);
-                        self.properties_buffer.add(property);
-                        todo!("Finish processing a buffered property")
-                    }
-                    NodeEvent::Children(children) => {
-                        self.children_buffer = Some(children);
-                        Ok(None)
-                    }
-                    NodeEvent::End => Ok(None),
-                },
-            },
-        }
-    }
-}
-
-/// Deserialize a KDL value.
-///
-/// - Primitive types (numbers, string, etc) are deserialized to themselves
-/// - null is deserialized to none, other values to Some
-/// - enums with only unit variants may be deserialized
-struct ValueDeserializer<'a> {
-    value: KdlValue<'a>,
-}
-
-impl<'de> Deserializer<'de> for ValueDeserializer<'de> {
-    type Error = Error;
-
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.value.visit_to(visitor)
-    }
-
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        match self.value {
-            KdlValue::Null => visitor.visit_none(),
-            value => visitor.visit_some(ValueDeserializer { value }),
-        }
-    }
-
-    fn deserialize_newtype_struct<V>(
-        self,
-        name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        visitor.visit_newtype_struct(self)
-    }
-
-    fn deserialize_enum<V>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        visitor.visit_enum(self)
-    }
-
-    forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct seq tuple
-        tuple_struct map struct identifier ignored_any
-    }
-}
-
-impl<'de> EnumAccess<'de> for ValueDeserializer<'de> {
-    type Error = Error;
-    type Variant = EmptyDeserializer;
-
-    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
-    where
-        V: de::DeserializeSeed<'de>,
-    {
-        seed.deserialize(self)
-            .map(|value| (value, EmptyDeserializer))
-    }
-}
-
-/// Deserialize a KDL string. Visits as a string; newtype structs are forwarded;
-/// unit enum variants are accepted.
-struct StringDeserializer<'a> {
-    value: KdlString<'a>,
-}
-
-impl<'de> Deserializer<'de> for StringDeserializer<'de> {
-    type Error = Error;
-
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.value.visit_to(visitor)
-    }
-
-    fn deserialize_newtype_struct<V>(
-        self,
-        name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        visitor.visit_newtype_struct(self)
-    }
-
-    fn deserialize_enum<V>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        visitor.visit_enum(self)
-    }
-
-    forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct seq tuple
-        tuple_struct map struct identifier ignored_any
-    }
-}
-
-impl<'de> EnumAccess<'de> for StringDeserializer<'de> {
-    type Error = Error;
-    type Variant = EmptyDeserializer;
-
-    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
-    where
-        V: de::DeserializeSeed<'de>,
-    {
-        seed.deserialize(self)
-            .map(|value| (value, EmptyDeserializer))
-    }
-}
-
-/// Deserializer for things that are empty. Deserializes as a unit, or an empty
-/// sequence / map, or as a unit variant.
-struct EmptyDeserializer;
-
-impl<'de> Deserializer<'de> for EmptyDeserializer {
-    type Error = Error;
-
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        visitor.visit_unit()
-    }
-
-    fn deserialize_newtype_struct<V>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        visitor.visit_newtype_struct(self)
-    }
-
-    forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct seq tuple
-        tuple_struct map struct enum identifier ignored_any
-    }
-}
-
-impl<'de> SeqAccess<'de> for EmptyDeserializer {
-    type Error = Error;
-
-    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
-    where
-        T: de::DeserializeSeed<'de>,
-    {
-        Ok(None)
-    }
-}
-
-impl<'de> MapAccess<'de> for EmptyDeserializer {
-    type Error = Error;
-
-    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
-    where
-        K: de::DeserializeSeed<'de>,
-    {
-        Ok(None)
-    }
-
-    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::DeserializeSeed<'de>,
-    {
-        panic!("No values in an EmptyDeserializer")
-    }
-}
-
-impl<'de> VariantAccess<'de> for EmptyDeserializer {
-    type Error = Error;
-
-    fn unit_variant(self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
-    where
-        T: de::DeserializeSeed<'de>,
-    {
-        Err(Error::UnitVariantRequired)
-    }
-
-    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        Err(Error::UnitVariantRequired)
-    }
-
-    fn struct_variant<V>(
-        self,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        Err(Error::UnitVariantRequired)
     }
 }

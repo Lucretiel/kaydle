@@ -2,4 +2,5 @@
 members = [
     "kaydle",
     "kaydle-primitives",
+    "kaydle-test",
 ]
