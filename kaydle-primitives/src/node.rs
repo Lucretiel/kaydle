@@ -1,6 +1,5 @@
 use std::{char::CharTryFromError, num::ParseIntError};
 
-use derive_destructure::destructure;
 use nom::{
     branch::alt,
     character::complete::char,
@@ -209,15 +208,14 @@ where
     .parse(input)
 }
 
-#[derive(Debug, Clone, destructure)]
+#[derive(Debug, Clone)]
 pub struct NodeProcessor<'i, 'p> {
     state: ProcessorState<'i, 'p>,
 }
 
 impl<'i, 'p> NodeProcessor<'i, 'p> {
     pub fn merge_into(self, original: &mut Self) {
-        let (state,) = self.destructure();
-        state.merge_into(&mut original.state)
+        self.state.merge_into(&mut original.state)
     }
 
     // Parse and discard everything in this node
@@ -259,24 +257,11 @@ impl<'i, 'p> NodeProcessor<'i, 'p> {
             .map(move |event| match event {
                 InternalNodeEvent::Value(value) => NodeEvent::Value(value, self),
                 InternalNodeEvent::Property(prop) => NodeEvent::Property(prop, self),
-                InternalNodeEvent::Children => NodeEvent::Children(NodeChildrenProcessor {
-                    state: self.destructure().0,
-                }),
+                InternalNodeEvent::Children => {
+                    NodeEvent::Children(NodeChildrenProcessor { state: self.state })
+                }
                 InternalNodeEvent::End => NodeEvent::End,
             })
-    }
-}
-
-impl<'i, 'p> Drop for NodeProcessor<'i, 'p> {
-    fn drop(&mut self) {
-        // Disconnected NodeProcessors come from clone + peek pattern, and
-        // therefore don't need to be fully consumed.
-        if let Parent(..) = self.state {
-            panic!(
-                "Dropped a kaydle::NodeProcessor before completing it. Node \
-                processors must be fully consumed with `next_event`."
-            )
-        }
     }
 }
 

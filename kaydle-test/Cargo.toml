@@ -8,4 +8,5 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0.44"
 kaydle = { path = "../kaydle" }
-serde = "1.0.130"
+kaydle-primitives = { path = "../kaydle-primitives/" }
+serde = { version = "1.0.130", features = [ "derive" ] }

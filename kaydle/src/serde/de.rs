@@ -274,7 +274,15 @@ where
                         state: &mut self.state,
                     })
                     .map(Some),
-                Some(ref state) => todo!(),
+                Some(ref mut state) => {
+                    let mut fake_state = None;
+                    seed.deserialize(BeginSeqNodeDeserializer {
+                        name,
+                        processor,
+                        state: &mut fake_state,
+                    })
+                    .map(Some)
+                }
             },
             None => Ok(None),
         }
@@ -533,6 +541,8 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     where
         V: de::Visitor<'de>,
     {
+        // TODO: check the newtype's struct name against the node name
+        // but only if this is a flat list and not an enum or string list
         visitor.visit_newtype_struct(self)
     }
 
@@ -635,7 +645,44 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        *self.state = Some(NodeListSequenceState::FlatList(self.name));
+
+        let mut collect_values = CollectRule::Done;
+        let mut collect_properties = CollectRule::Dont;
+        let mut collect_children = CollectRule::Dont;
+
+        fn filter_noticed<'s>(
+            slot: &'s mut CollectRule,
+            name: &'static str,
+        ) -> impl FnMut(&&str) -> bool + 's {
+            move |field| {
+                if *field == name {
+                    *slot = CollectRule::Do;
+                    false
+                } else {
+                    true
+                }
+            }
+        }
+
+        let fields = fields
+            .iter()
+            .copied()
+            .filter(filter_noticed(&mut collect_values, "kdl::values"))
+            .filter(filter_noticed(&mut collect_properties, "kdl::properties"))
+            .filter(filter_noticed(&mut collect_children, "kdl::children"))
+            .map(Some)
+            .collect();
+
+        let mut map = SimpleStructMapAccess {
+            fields,
+            collect_values,
+            collect_properties,
+            collect_children: false,
+            state: MapAccessState::Key(self.processor),
+        };
+
+        visitor.visit_map(&mut map)
     }
 
     fn deserialize_enum<V>(
@@ -667,26 +714,26 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
 }
 
 trait Unexpected<'p, 'de> {
-    fn value() -> Result<(), Error>;
-    fn property() -> Result<(), Error>;
-    fn children(children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error>;
+    fn value(&mut self) -> Result<(), Error>;
+    fn property(&mut self) -> Result<(), Error>;
+    fn children(&mut self, children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error>;
 }
 
 struct UnexpectedIsError;
 
 impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedIsError {
     #[inline]
-    fn value() -> Result<(), Error> {
+    fn value(&mut self) -> Result<(), Error> {
         Err(Error::UnexpectedValue)
     }
 
     #[inline]
-    fn property() -> Result<(), Error> {
+    fn property(&mut self) -> Result<(), Error> {
         Err(Error::UnexpectedProperty)
     }
 
     #[inline]
-    fn children(_children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
+    fn children(&mut self, _children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
         Err(Error::UnexpectedChildren)
     }
 }
@@ -694,15 +741,15 @@ impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedIsError {
 struct UnexpectedPermissive;
 
 impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedPermissive {
-    fn value() -> Result<(), Error> {
+    fn value(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
-    fn property() -> Result<(), Error> {
+    fn property(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
-    fn children(_children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
+    fn children(&mut self, _children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
         // In this case we don't consume children, on the assumption that this
         // is being used in a forked processor
         Ok(())
@@ -736,11 +783,11 @@ impl<'p, 'de, U: Unexpected<'p, 'de>> SeqAccess<'de> for &mut ValuesSeqAccess<'p
                             }
                             NodeEvent::Property(RecognizedProperty { .. }, processor) => {
                                 self.processor = Some(processor);
-                                U::property()?;
+                                self.skip_rule.property()?;
                                 continue;
                             }
                             NodeEvent::Children(children) => {
-                                U::children(children)?;
+                                self.skip_rule.children(children)?;
                                 Ok(None)
                             }
                             NodeEvent::End => Ok(None),
@@ -783,11 +830,11 @@ impl<'p, 'de, U: Unexpected<'p, 'de>> MapAccess<'de> for PropertiesMapAccess<'p,
                             }
                             NodeEvent::Value((), processor) => {
                                 self.processor = Some(processor);
-                                U::value()?;
+                                self.skip_rule.value()?;
                                 continue;
                             }
                             NodeEvent::Children(children) => {
-                                U::children(children)?;
+                                self.skip_rule.children(children)?;
                                 Ok(None)
                             }
                             NodeEvent::End => Ok(None),
