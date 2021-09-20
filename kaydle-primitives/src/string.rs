@@ -23,6 +23,7 @@ use nom_supreme::{
     ParserExt,
 };
 use serde::{de, Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::util::back;
 
@@ -375,21 +376,85 @@ mod test_parse_raw {
 }
 
 /// Parse a KDL bare identifier.
-///
-/// # Compatibility note:
-///
-/// Currently this parses only a subset of KDL identifiers: alphabetics followed
-/// by alphanumerics.
 pub fn parse_bare_identifier<'i, E: ParseError<&'i str>>(
     input: &'i str,
 ) -> IResult<&'i str, &'i str, E> {
-    match input.chars().next() {
-        Some(c) if c.is_alphabetic() => {
-            let split_point = input[1..].find(|c: char| !c.is_alphanumeric()).unwrap_or(0) + 1;
-            let (ident, tail) = input.split_at(split_point);
+    let graphemes = input.graphemes(true).collect::<Vec<&str>>();
+
+    // TODO match?
+    if let Some((initial, rest)) = graphemes.split_first() {
+        if !initial.is_non_initial() {
+            let split_point = rest.iter().position(|g| g.is_non_identifier()).unwrap_or(0);
+            let (valid, _) = rest.split_at(split_point);
+
+            let valid_until = {
+                let mut ident = valid.to_vec();
+                ident.insert(0, initial);
+                println!("ident: {:?}", ident);
+                ident.concat().len()
+            };
+            let (ident, tail) = input.split_at(valid_until);
+
             Ok((tail, ident))
+        } else {
+            // error invalid initial
+            Err(NomErr::Error(make_error(input, ErrorKind::Alpha)))
         }
-        _ => Err(NomErr::Error(make_error(input, ErrorKind::Alpha))),
+    } else {
+        // error input length
+        Err(NomErr::Error(make_error(input, ErrorKind::Alpha)))
+    }
+}
+
+trait IdentifierExt {
+    fn is_non_initial(self) -> bool;
+    fn is_non_identifier(self) -> bool;
+}
+
+impl IdentifierExt for &str {
+    fn is_non_initial(self) -> bool {
+        if self.len() == 1 {
+            // TODO unwrap_or?
+            if let Some(c) = self.chars().next() {
+                c.is_non_initial()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+    fn is_non_identifier(self) -> bool {
+        if self.len() == 1 {
+            // TODO unwrap_or?
+            if let Some(c) = self.chars().next() {
+                c.is_non_identifier()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+}
+
+impl IdentifierExt for char {
+    /// Any decimal digit (0-9)
+    /// Any non-identifier characters
+    fn is_non_initial(self) -> bool {
+        self.is_numeric() || self.is_non_identifier()
+    }
+
+    /// Any codepoint with hexadecimal value 0x20 or below.
+    /// Any codepoint with hexadecimal value higher than 0x10FFFF.
+    /// Any of \/(){}<>;[]=,"
+    fn is_non_identifier(self) -> bool {
+        match self {
+            '\\' | '/' | '(' | ')' | '{' | '}' | '<' | '>' | ';' | '[' | ']' | '=' | ',' | '"' => {
+                true
+            }
+            c => c <= '\x20',
+        }
     }
 }
 
@@ -420,6 +485,19 @@ mod test_parse_identifier {
                 input: "123",
                 code: ErrorKind::Alpha
             }))
+        )
+    }
+
+    #[test]
+    fn symbol() {
+        assert_eq!(typed_parse_identifier("$x %myvar%"), Ok((" %myvar%", "$x")))
+    }
+
+    #[test]
+    fn unicode() {
+        assert_eq!(
+            typed_parse_identifier("ノード　お名前=\"☜(ﾟヮﾟ☜)\""),
+            Ok(("=\"☜(ﾟヮﾟ☜)\"", "ノード　お名前"))
         )
     }
 }
