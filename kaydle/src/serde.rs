@@ -1,3 +1,3 @@
-mod de;
-mod magic;
-mod ser;
+pub mod de;
+pub mod magic;
+pub mod ser;
