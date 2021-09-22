@@ -12,7 +12,6 @@ memchr = "2.4.1"
 nom = "7.0.0"
 nom-supreme = "0.6.0"
 serde = "1.0.129"
-unicode-segmentation = "1.8.0"
 
 [dev-dependencies]
 cool_asserts = "1.1.1"

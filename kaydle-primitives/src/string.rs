@@ -23,7 +23,6 @@ use nom_supreme::{
     ParserExt,
 };
 use serde::{de, Deserialize, Serialize};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::util::back;
 
@@ -375,86 +374,68 @@ mod test_parse_raw {
     }
 }
 
-/// Parse a KDL bare identifier.
-pub fn parse_bare_identifier<'i, E: ParseError<&'i str>>(
-    input: &'i str,
-) -> IResult<&'i str, &'i str, E> {
-    let graphemes = input.graphemes(true).collect::<Vec<&str>>();
-
-    // TODO match?
-    if let Some((initial, rest)) = graphemes.split_first() {
-        if !initial.is_non_initial() {
-            let split_point = rest.iter().position(|g| g.is_non_identifier()).unwrap_or(0);
-            let (valid, _) = rest.split_at(split_point);
-
-            let valid_until = {
-                let mut ident = valid.to_vec();
-                ident.insert(0, initial);
-                println!("ident: {:?}", ident);
-                ident.concat().len()
-            };
-            let (ident, tail) = input.split_at(valid_until);
-
-            Ok((tail, ident))
-        } else {
-            // error invalid initial
-            Err(NomErr::Error(make_error(input, ErrorKind::Alpha)))
-        }
-    } else {
-        // error input length
-        Err(NomErr::Error(make_error(input, ErrorKind::Alpha)))
-    }
-}
-
 trait IdentifierExt {
-    fn is_non_initial(self) -> bool;
-    fn is_non_identifier(self) -> bool;
-}
-
-impl IdentifierExt for &str {
-    fn is_non_initial(self) -> bool {
-        if self.len() == 1 {
-            // TODO unwrap_or?
-            if let Some(c) = self.chars().next() {
-                c.is_non_initial()
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-    fn is_non_identifier(self) -> bool {
-        if self.len() == 1 {
-            // TODO unwrap_or?
-            if let Some(c) = self.chars().next() {
-                c.is_non_identifier()
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
+    fn is_non_initial(&self) -> bool;
+    fn is_non_identifier(&self) -> bool;
+    fn is_ws(&self) -> bool;
 }
 
 impl IdentifierExt for char {
     /// Any decimal digit (0-9)
     /// Any non-identifier characters
-    fn is_non_initial(self) -> bool {
+    fn is_non_initial(&self) -> bool {
         self.is_numeric() || self.is_non_identifier()
     }
 
     /// Any codepoint with hexadecimal value 0x20 or below.
     /// Any codepoint with hexadecimal value higher than 0x10FFFF.
     /// Any of \/(){}<>;[]=,"
-    fn is_non_identifier(self) -> bool {
-        match self {
-            '\\' | '/' | '(' | ')' | '{' | '}' | '<' | '>' | ';' | '[' | ']' | '=' | ',' | '"' => {
-                true
-            }
-            c => c <= '\x20',
+    fn is_non_identifier(&self) -> bool {
+        let special = "\\/(){}<>;[]=,\"";
+        *self <= '\u{20}' || *self > '\u{10FFFF}' || special.contains(*self) || self.is_ws()
+    }
+
+    fn is_ws(&self) -> bool {
+        matches!(
+            *self,
+            '\u{0009}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'
+                | '\u{2001}'
+                | '\u{2002}'
+                | '\u{2003}'
+                | '\u{2004}'
+                | '\u{2005}'
+                | '\u{2006}'
+                | '\u{2007}'
+                | '\u{2008}'
+                | '\u{2009}'
+                | '\u{200A}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+        )
+    }
+}
+
+/// Parse a KDL bare identifier.
+pub fn parse_bare_identifier<'i, E: ParseError<&'i str>>(
+    input: &'i str,
+) -> IResult<&'i str, &'i str, E> {
+    let mut input_iter = input.chars();
+    match input_iter.next() {
+        Some(c0) if !c0.is_non_initial() => {
+            let mut valid_until = c0.len_utf8();
+            valid_until += input_iter
+                .take_while(|c| !c.is_non_identifier())
+                .fold(0, |acc, l| acc + l.len_utf8());
+
+            let (ident, tail) = input.split_at(valid_until);
+            Ok((tail, ident))
         }
+        _ => Err(NomErr::Error(make_error(input, ErrorKind::Alpha))),
     }
 }
 
@@ -490,14 +471,17 @@ mod test_parse_identifier {
 
     #[test]
     fn symbol() {
-        assert_eq!(typed_parse_identifier("$x %myvar%"), Ok((" %myvar%", "$x")))
+        assert_eq!(
+            typed_parse_identifier("foo123~!@#$%^&*.:'|?+ \"weeee\""),
+            Ok((" \"weeee\"", "foo123~!@#$%^&*.:'|?+"))
+        )
     }
 
     #[test]
     fn unicode() {
         assert_eq!(
-            typed_parse_identifier("ノード　お名前=\"☜(ﾟヮﾟ☜)\""),
-            Ok(("=\"☜(ﾟヮﾟ☜)\"", "ノード　お名前"))
+            typed_parse_identifier("ノード　お名前"),
+            Ok(("　お名前", "ノード"))
         )
     }
 }
