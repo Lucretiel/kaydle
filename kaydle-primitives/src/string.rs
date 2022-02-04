@@ -36,14 +36,14 @@ pub struct KdlString<'a> {
 
 impl<'a> KdlString<'a> {
     pub fn new() -> Self {
-        Self::from_str("")
+        Self::from_borrowed("")
     }
 
     pub fn from_cow(cow: Cow<'a, str>) -> Self {
         Self { inner: cow }
     }
 
-    pub fn from_str(s: &'a str) -> Self {
+    pub fn from_borrowed(s: &'a str) -> Self {
         Self::from_cow(Cow::Borrowed(s))
     }
 
@@ -160,7 +160,7 @@ impl<'de> Deserialize<'de> for KdlString<'de> {
             where
                 E: de::Error,
             {
-                Ok(KdlString::from_str(value))
+                Ok(KdlString::from_borrowed(value))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
@@ -238,7 +238,7 @@ impl<'a> StringBuilder<'a> for KdlString<'a> {
     }
 
     fn from_str(s: &'a str) -> Self {
-        Self::from_str(s)
+        Self::from_borrowed(s)
     }
 }
 
