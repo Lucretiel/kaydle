@@ -4,11 +4,16 @@ version = "0.1.0"
 authors = ["Nathan West <Lucretiel@gmail.com>"]
 edition = "2018"
 
+license = "MPL-2.0"
+description = "Serde serializer and deserializer for KDL"
+repository = "https://github.com/Lucretiel/kaydle"
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 arrayvec = "0.7.1"
-kaydle-primitives = { path = "../kaydle-primitives/" }
+kaydle-primitives = { path = "../kaydle-primitives/", version = "1.0.0" }
 lazy_format = "1.9.0"
 nom = "7.0.0"
 nom-supreme = "0.5.0"
