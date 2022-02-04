@@ -97,7 +97,7 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Base {
+enum Base {
     Binary,
     Octal,
     Hex,
