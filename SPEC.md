@@ -18,7 +18,7 @@ This section is a refresher on how KDL works; make sure to check out the [offici
      - KDL strings are defined as Escaped Strings, Raw Strings, and Bare Identifiers.
      - A String is a Raw String or Escaped String.
      - An Identifier is a String or Bare Identifier.
-1. Any Node or Value may be prefixed with an Annotation, which is an Identifier-String.
+1. Any Node or Value may be prefixed with an Annotation, which is an Identifier.
 
 ## Specification
 
