@@ -67,7 +67,7 @@ struct Pair {
 - When kaydle encounters a Nodelist (which is either a top-level Document or set of Children):
   - If a serde map or struct is requested, the Nodes are treated as key-value pairs, where the node's name is the key, and the value is the Anonymous Node.
   - If a serde sequence / tuple type is requested, the Nodes are treated as an ordered sequence, where each element is a Named Node
-  - Other types are errors
+  - Other types are errors, including `any`.
 - When kaydle encounters a Named Node:
   - If the requested type is an enum, the node name is used as the enum variant selector, and the variant's content is deserialized as though this was an Anonymous node.
     - For instance, a tuple_variant will be deserialized as a tuple struct via the anonymous node.
