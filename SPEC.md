@@ -13,6 +13,7 @@ This section is a refresher on how KDL works; make sure to check out the [offici
 1. A Node argument is any Value associated with a Node. Arguments are semantically ordered.
 1. A Property is a key-value pair associated with a Node, where the key is an Identifier and the value is any Value. Properties are semantically unordered and later properties override earlier ones. (`a=1 b=2` is equivalent to `b=3 b=2 a=1`)
 1. A Value is any one of `null`, `true`, `false`, a number, or a String.
+1. KDL numbers may be binary, octal, decimal, or hex; decimal numbers may have a fractional and/or exponent part. KDL numbers have unlimited precision and unlimited width; all forms of the same number are considered semantically identical.
 1. KDL has 3 kinds of string: Quoted, Raw, and Identifier. All of these strings are considered semantically identical, but the language syntax specifies with types of strings may be used in which syntax positions.
    - For succinctness, `kaydle` defines the following hierarchy of strings:
      - KDL strings are defined as Escaped Strings, Raw Strings, and Bare Identifiers.
