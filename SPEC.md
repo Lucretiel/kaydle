@@ -11,7 +11,7 @@ This section is a refresher on how KDL works; make sure to check out the [offici
 1. Children are a list of Nodes associated with some parent Node.
 1. A Node name is an Identifier.
 1. A Node argument is any Value associated with a Node. Arguments are semantically ordered.
-1. A Property is a key-value pair associated with a Node, where the key is an Identifier and the value is any Value. Properties are semantically unordered (`a=1 b=2` is equivalent) and later property keys override earlier ones.
+1. A Property is a key-value pair associated with a Node, where the key is an Identifier and the value is any Value. Properties are semantically unordered and later properties override earlier ones. (`a=1 b=2` is equivalent to `b=3 b=2 a=1`)
 1. A Value is any one of `null`, `true`, `false`, a number, or a String.
 1. KDL has 3 kinds of string: Quoted, Raw, and Identifier. All of these strings are considered semantically identical, but the language syntax specifies with types of strings may be used in which syntax positions.
    - For succinctness, `kaydle` defines the following hierarchy of strings:
