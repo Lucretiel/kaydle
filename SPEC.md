@@ -110,10 +110,6 @@ struct Pair {
 - A consequence of the rules for primitives and nodes is that "empty node" and `null` are both treated as `None`. Hypothetically, we could use these two cases to distinguish `None` (empty node) from `Some(None)` (`null`) (and in fact this would simplify the node handling rules), but in practice we assume that double options are rare in practice, and that users would be surprised to see `null` deserialized as `Some(...)`.
 - KDL (unlike serde, but like most other human-readable data formats) doesn't distinguish between different kinds of number, or even between integers and floats. kaydle, therefore, uses a set of rules parse number as either an `f64`, `i64`, or `u64` at parse time, which is then deserialized. The specific rules for this process are covered by kaydle's semver versioning but are documented separately and left deliberately unspecified in this spec.
 
-## kaydle utility types
-
-In addition to providing the parser and deserializer, kaydle provides some helper types for deserializing arbitrary KDL content
-
 ## KDL spec divergences
 
 This section lists the divergences from the KDL specification that are intentional for the time being. Other divergences are considered bugs. Where possible, we include workaround or other mitigations in cases where you need spec-compliant behavior.
