@@ -7,7 +7,7 @@ This document describes how KDL documents are mapped to the serde data model by 
 This section is a refresher on how KDL works; make sure to check out the [official specification](https://github.com/kdl-org/kdl/blob/main/SPEC.md) for more details. This section is mostly a reminder for the data types and semantics of KDL; it's not concerned with specifics about syntax / parsing, comments, etc.
 
 1. A KDL document is a list of Nodes.
-1. A KDL Node consists of a name, a list of 0 or more Arguments and 0 or more Properties, followed by an optional set of Children. Arguments and properties are separated by whitespace and may be interspersed.
+1. A KDL Node consists of a name, a list of 0 or more Arguments and 0 or more Properties, followed by an optional set of Children. Arguments and properties are separated by whitespace and may be interspersed, but semantically are separate.
 1. Children are a list of Nodes associated with some parent Node.
 1. A Node name is an Identifier-String.
 1. A Node argument is any Value associated with a Node. Arguments are semantically ordered.
