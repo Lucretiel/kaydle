@@ -15,7 +15,7 @@ This section is a refresher on how KDL works; make sure to check out the [offici
 1. A Value is any one of `null`, `true`, `false`, a number, or a String.
 1. KDL has 3 kinds of string: Quoted, Raw, and Identifier. All of these strings are considered semantically identical, but the language syntax specifies with types of strings may be used in which syntax positions.
    - For succinctness, `kaydle` defines the following hierarchy of strings:
-     - There are Escaped Strings, Raw Strings, and Bare Identifiers.
+     - KDL strings are defined Escaped Strings, Raw Strings, and Bare Identifiers.
      - A String is a Raw String or Escaped String.
      - An Identifier is a String or Bare Identifier.
 1. Any Node or Value may be prefixed with an Annotation, which is an Identifier-String.
