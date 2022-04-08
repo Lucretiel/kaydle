@@ -74,7 +74,7 @@ struct Pair {
   - If the requested type is named and not an enum (such as a struct, newtype struct, or unit struct), the node name must match the name of the type; mismatches are an error. The type is then deserialized as though this was an
     anonymous node
     - Exception: if the type is a struct type and includes a `$kaydle::name` magic, the type's name is ignored, and the node's name is deserialized into that field. If this type additionally has a `$kaydle::transparent` magic, that field is used as the target for the anonymous node deserialize. This serves the same purpose as `#[serde(transparent)]` in cases where you also want `$kaydle::name`. Additional fields are an error in this case.
-  - If the requested type is _not_ named, the node name _must_ be `-`; mismatches are an error. The type is then deserialized as thought this was an anonymous node.
+  - If the requested type is _not_ named, the node name _must_ be `-`; mismatches are an error. The type is then deserialized as though this was an anonymous node.
 - When kaydle encounters an anonymous node:
   - If the requested type is a struct, first check for magics:
     - `$kaydle::properties`: the collected set of properties of the node, as a serde map.
