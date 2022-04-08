@@ -182,7 +182,7 @@ data {
 }
 ```
 
-Similarly to the above, kaydle has to interpret both arguments and children as sequences, where relevant. For instance, given these Rust types:
+Similarly, kaydle has to interpret both arguments and children as sequences, where relevant. For instance, given these Rust types:
 
 ```rust
 #[derive(Deserialize)]
