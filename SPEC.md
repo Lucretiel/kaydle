@@ -153,7 +153,7 @@ node a=1 b=2 {}
 
 kaydle magics can be used to force a certain behavior, and the `$kaydle::children` property can treat an empty Children set as identical to an absent Children set.
 
-### Property-Children Equivalence
+### Property-Children and Argument-Children Equivalence
 
 Because serde only has the concept of a map type to handle key-value pairs (and equivalent elaborations like struct and struct variant), kaydle has to interpret both properties and children as maps, where relevant. For instance, given these Rust types:
 
@@ -179,6 +179,31 @@ data a=1 b=true
 data {
     a 2
     b false
+}
+```
+
+Similarly to the above, kaydle has to interpret both arguments and children as sequences, where relevant. For instance, given these Rust types:
+
+```rust
+#[derive(Deserialize)]
+#[serde(rename="data")]
+struct Data(Vec<String>);
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct DataList {
+    data: Vec<Data>
+}
+```
+
+kaydle will successfully deserialize this document into a `DataList`, likely in contradiction with the intent of its author:
+
+```kdl
+data a b c
+data {
+  - "a"
+  - "b"
+  - "c"
 }
 ```
 
