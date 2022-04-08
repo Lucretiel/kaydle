@@ -90,9 +90,9 @@ struct Pair {
     - If it has children, they are deserialized as a sequence, using the Named Nodes as values
   - If the requested type is an enum, the first argument to the node is used as the enum variant, and the remainder of the node is used to deserialize the content of the enum (as though it was an anonymous node without that first argument)
   - If the requested type is a unit, the node must have no arguments, properties, or children (not even `null`).
-  - If the requested type is an option, and it has no arguments, children, or properties, it's deserialized as `none`; otherwise, it's deserialized normally
+  - If the requested type is an option, and it has no children or properties, and it has no arguments or a single `null` argument, it's deserialized as `none`; otherwise, it's deserialized normally.
   - If the requested type is a primitive, the node must have exactly 1 argument, no properties, and no children. The argument is deserialized directly.
-  - Other types are errors.
+  - Other types are errors, including `any`.
 - When kaydle encounters a Value:
   - If the requested type is an option, `null` is deserialized; otherwise, the value is forwarded.
   - If the requested type is a struct, and it has a `$kaydle::annotation` field and exactly one other field, the annotation for the value is extracted and the value is forwarded. Other kinds of structs use the catch-all Value rule.
