@@ -234,13 +234,21 @@ where
     E: FromExternalError<&'i str, BoundsError>,
     E: ContextError<&'i str>,
 {
+    // There are two major improvements that can be made to this parser, both
+    // related to duplicate work:
+    //
+    // - Don't repeat the `.preceded_by(parse_node_space)` between the
+    //   argument/property case and the children/end case
+    // - Don't repeat the string parse for a value and the string parse for
+    //   a property.
+    //
+    // For now we assume, perhaps aspirationally, that the optimizer notices
+    // and unifies some of the commonalities.
     alt((
         // Parse a value or property, preceded by 1 or more whitespace
         alt((
             // Important: make sure to try to parse a property first, since
             // "abc"=10 could be conservatively parsed as just the value "abc"
-            // TODO: try to parse a value first, and if it's a string, try to
-            // parse =value (in other words, avoid duplicating the string parse)
             parse_property
                 .map(InternalNodeEvent::Property)
                 .context("property"),
