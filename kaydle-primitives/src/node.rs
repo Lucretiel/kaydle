@@ -10,11 +10,11 @@ use nom::{
 use nom_supreme::{tag::TagError, ParserExt};
 
 use crate::{
-    annotation::{with_annotation, Annotated, AnnotationBuilder, RecognizedAnnotation},
+    annotation::{with_annotation, AnnotationBuilder, GenericAnnotated, RecognizedAnnotation},
     number::BoundsError,
     property::{parse_property, GenericProperty, RecognizedProperty},
     string::{parse_identifier, StringBuilder},
-    value::{parse_annotated_value, ValueBuilder},
+    value::{parse_value, ValueBuilder},
     whitespace::{parse_linespace, parse_node_space, parse_node_terminator},
 };
 
@@ -35,7 +35,7 @@ where
 /// subparser indicating the end of a node list (either a } or an eof)
 fn parse_node_start<'i, T, A, E>(
     end_of_nodes: impl Parser<&'i str, (), E>,
-) -> impl Parser<&'i str, Option<Annotated<A, T>>, E>
+) -> impl Parser<&'i str, Option<GenericAnnotated<A, T>>, E>
 where
     T: StringBuilder<'i>,
     A: AnnotationBuilder<'i>,
@@ -55,7 +55,7 @@ where
 /// annotated name of the node as well as a node processor for fetching
 /// arguments, properties, and children from the node.
 pub struct NodeItem<'i, 'a, A, T> {
-    pub name: Annotated<A, T>,
+    pub name: GenericAnnotated<A, T>,
     pub content: NodeProcessor<'i, 'a>,
 }
 
@@ -137,7 +137,7 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeDocumentProcessor<'i> {
 }
 
 enum InternalNodeEvent<VA, V, K, PA, P> {
-    Argument(Annotated<VA, V>),
+    Argument(GenericAnnotated<VA, V>),
     Property(GenericProperty<K, PA, P>),
     Children,
     End,
@@ -149,7 +149,7 @@ pub enum NodeEvent<'i, 'p, VA, V, K, PA, P> {
     /// An argument from a node
     Argument(
         /// The argument
-        Annotated<VA, V>,
+        GenericAnnotated<VA, V>,
         /// The processor containing the rest of the node
         NodeProcessor<'i, 'p>,
     ),
@@ -194,7 +194,7 @@ where
             parse_property
                 .map(InternalNodeEvent::Property)
                 .context("property"),
-            parse_annotated_value
+            parse_value
                 .map(InternalNodeEvent::Argument)
                 .context("value"),
         ))
@@ -324,97 +324,9 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for &mut NodeChildrenProcessor<'i, 'p> {
     }
 }
 
-#[test]
-fn test_full_document() {
-    use crate::number::KdlNumber;
-    use crate::string::KdlString;
-    use crate::value::KdlValue;
-    use cool_asserts::assert_matches;
-
-    let content = r##"
-    // This is a KDL document!
-    node1 "arg1" prop=10 {
-        (u8)item 10
-        (u8)item 20
-        primitives (n)null true false
-        items {
-            a /* An important note here */ "abc"
-            d "def"; g "ghi"
-        }
-    }
-    (annotated)node2 "big\nstring" prop=(no)null
-    "##;
-
-    fn next_node<'i, 's, 'p>(
-        processor: &'s mut impl NodeListProcessor<'i, 'p>,
-    ) -> Result<Option<NodeItem<'i, 's, Option<KdlString<'i>>, KdlString<'i>>>, nom::Err<()>> {
-        processor.next_node()
-    }
-
-    fn next_event<'i, 'p>(
-        processor: NodeProcessor<'i, 'p>,
-    ) -> Result<
-        NodeEvent<
-            'i,
-            'p,
-            Option<KdlString<'i>>,
-            KdlValue<'i>,
-            KdlString<'i>,
-            Option<KdlString<'i>>,
-            KdlValue<'i>,
-        >,
-        nom::Err<()>,
-    > {
-        processor.next_event()
-    }
-
-    let mut processor = NodeDocumentProcessor::new(content);
-    let processor = &mut processor;
-
-    let node1 = next_node(processor)
-        .expect("parse error")
-        .expect("missing node");
-
-    assert_eq!(node1.name.annotation, None);
-    assert_eq!(node1.name.item, "node1");
-
-    let (value, content) = assert_matches!(
-        next_event(node1.content), Ok(NodeEvent::Argument(value, content)) => (value, content)
-    );
-
-    assert_eq!(value.annotation, None);
-    assert_matches!(value.item, KdlValue::String(s) => assert_eq!(s, "arg1"));
-
-    let (prop, content) = assert_matches!(
-        next_event(content), Ok(NodeEvent::Property(prop, content)) => (prop, content)
-    );
-
-    assert_eq!(prop.key, "prop");
-    assert_eq!(prop.value.annotation, None);
-    assert_matches!(prop.value.item, KdlValue::Number(KdlNumber::Unsigned(10)));
-
-    let mut node1_children =
-        assert_matches!(next_event(content), Ok(NodeEvent::Children(children)) => children);
-
-    {
-        let item = next_node(&mut node1_children)
-            .expect("parse error")
-            .expect("missing node");
-
-        assert_eq!(item.name.annotation.unwrap(), "u8");
-        assert_eq!(item.name.item, "item");
-
-        let (arg, content) = assert_matches!(
-            next_event(item.content), Ok(NodeEvent::Argument(arg, content)) => (arg, content)
-        );
-
-        assert_eq!(arg.annotation, None);
-        assert_matches!(arg.item, KdlValue::Number(KdlNumber::Unsigned(10)));
-
-        assert_matches!(next_event(content), Ok(NodeEvent::End));
-    }
-}
-
+/// This test may not look like much, but all the relevant components are
+/// separately tested. If `.drain()` works, it's very likely the entire
+/// processor does too
 #[test]
 fn test_full_document_drain() {
     let content = r##"
@@ -428,6 +340,8 @@ fn test_full_document_drain() {
         }
     }
     (annotated)node2
+    primitives null false true 10 10.5 -10 -10.5 3e6 0x10c 0b00001111 0o755
+    (a)annotated (n)null (f)false (t)true (i)10 (f)10.5 (n)-10.5e7
     "##;
 
     let processor = NodeDocumentProcessor::new(content);

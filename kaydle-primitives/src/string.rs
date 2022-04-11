@@ -3,6 +3,7 @@ use std::{
     char::CharTryFromError,
     convert::TryInto,
     fmt::{self, Formatter},
+    hash::{Hash, Hasher},
     iter::FromIterator,
     ops::{Deref, DerefMut, Index, RangeFrom, RangeTo},
 };
@@ -74,6 +75,12 @@ impl<'a> KdlString<'a> {
 impl<T: AsRef<str>> PartialEq<T> for KdlString<'_> {
     fn eq(&self, other: &T) -> bool {
         self.as_ref() == other.as_ref()
+    }
+}
+
+impl Hash for KdlString<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state)
     }
 }
 

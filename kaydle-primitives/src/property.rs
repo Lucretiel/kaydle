@@ -8,16 +8,16 @@ use nom::{
 use nom_supreme::{tag::TagError, ParserExt};
 
 use crate::{
-    annotation::{Annotated, AnnotationBuilder},
+    annotation::{AnnotationBuilder, GenericAnnotated},
     number::BoundsError,
     string::{parse_identifier, KdlString, StringBuilder},
-    value::{parse_annotated_value, KdlValue, ValueBuilder},
+    value::{parse_value, KdlValue, ValueBuilder},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GenericProperty<K, A, V> {
     pub key: K,
-    pub value: Annotated<A, V>,
+    pub value: GenericAnnotated<A, V>,
 }
 
 pub type Property<'a> = GenericProperty<KdlString<'a>, KdlString<'a>, KdlValue<'a>>;
@@ -44,7 +44,7 @@ where
     parse_identifier
         .context("key")
         .terminated(char('='))
-        .and(parse_annotated_value.context("value"))
+        .and(parse_value.context("value"))
         .map(|(key, value)| GenericProperty { key, value })
         .parse(input)
 }

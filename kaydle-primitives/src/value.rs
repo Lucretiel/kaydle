@@ -12,7 +12,7 @@ use nom_supreme::{tag::TagError, ParserExt};
 use serde::{de, Deserialize, Serialize};
 
 use crate::{
-    annotation::{with_annotation, Annotated, AnnotationBuilder},
+    annotation::{with_annotation, AnnotationBuilder, GenericAnnotated},
     number::{parse_number, BoundsError, KdlNumber, NumberBuilder},
     parse_bool, parse_null,
     string::{parse_string, KdlString, StringBuilder},
@@ -181,7 +181,7 @@ impl ValueBuilder<'_> for () {
     fn from_string(_value: Self::String) {}
 }
 
-pub fn parse_value<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
+pub fn parse_bare_value<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
 where
     T: ValueBuilder<'i>,
     E: ParseError<&'i str>,
@@ -199,9 +199,9 @@ where
     .parse(input)
 }
 
-pub fn parse_annotated_value<'i, V, A, E>(input: &'i str) -> IResult<&'i str, Annotated<A, V>, E>
+pub fn parse_value<'i, T, A, E>(input: &'i str) -> IResult<&'i str, GenericAnnotated<A, T>, E>
 where
-    V: ValueBuilder<'i>,
+    T: ValueBuilder<'i>,
     A: AnnotationBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
@@ -209,5 +209,5 @@ where
     E: FromExternalError<&'i str, BoundsError>,
     E: ContextError<&'i str>,
 {
-    with_annotation(parse_value).parse(input)
+    with_annotation(parse_bare_value).parse(input)
 }

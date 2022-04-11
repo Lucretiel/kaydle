@@ -7,7 +7,10 @@ use nom::{
 };
 use nom_supreme::{tag::TagError, ParserExt};
 
-use crate::string::{parse_identifier, StringBuilder};
+use crate::{
+    string::{parse_identifier, KdlString, StringBuilder},
+    value::KdlValue,
+};
 
 pub fn parse_annotation<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
 where
@@ -61,14 +64,16 @@ impl<'i, S: StringBuilder<'i>> AnnotationBuilder<'i> for Option<S> {
 
 /// An annotated object of some kind
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Annotated<A, T> {
+pub struct GenericAnnotated<A, T> {
     pub annotation: A,
     pub item: T,
 }
 
-pub type RecognizedAnnotation = Annotated<(), ()>;
+pub type RecognizedAnnotation = GenericAnnotated<(), ()>;
+pub type Annotated<'i, T> = GenericAnnotated<Option<KdlString<'i>>, T>;
+pub type AnnotatedValue<'i> = Annotated<'i, KdlValue<'i>>;
 
-pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, Annotated<A, T>, E>
+pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
 where
     A: AnnotationBuilder<'i>,
     P: Parser<&'i str, T, E>,
@@ -82,10 +87,11 @@ where
         .map(A::build)
         .context("annotation")
         .and(parser)
-        .map(|(annotation, item)| Annotated { annotation, item })
+        .map(|(annotation, item)| GenericAnnotated { annotation, item })
 }
 
 #[cfg(test)]
+#[allow(clippy::bool_assert_comparison)]
 mod tests {
     use nom::error::Error;
     use nom_supreme::tag::complete::tag;
@@ -104,7 +110,7 @@ mod tests {
 
                 fn annotated_hello(
                     input: &'static str,
-                ) -> IResult<&'static str, Annotated<$anno, &'static str>, Error<&'static str>>
+                ) -> IResult<&'static str, GenericAnnotated<$anno, &'static str>, Error<&'static str>>
                 {
                     with_annotation(tag("hello")).parse(input)
                 }
@@ -116,6 +122,7 @@ mod tests {
 
                     assert_eq!(value.item, "hello");
                     assert_eq!(tail, " world");
+
                     assert_eq!(value.annotation, $absent);
                 }
 
@@ -127,6 +134,7 @@ mod tests {
 
                     assert_eq!(value.item, "hello");
                     assert_eq!(tail, " world");
+
                     assert_eq!(value.annotation, $present)
                 }
 
@@ -138,6 +146,7 @@ mod tests {
 
                     assert_eq!(value.item, "hello");
                     assert_eq!(tail, " world");
+
                     assert_eq!(value.annotation, $present)
                 }
 
