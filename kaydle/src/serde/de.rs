@@ -1,4 +1,6 @@
-mod helper_deserializers;
+mod helpers;
+mod list;
+mod node;
 
 use std::{
     fmt::Display,
@@ -25,19 +27,7 @@ use serde::{
 use thiserror::Error;
 
 use crate::serde::magic;
-use helper_deserializers::{EmptyDeserializer, StringDeserializer, ValueDeserializer};
-
-pub fn deserializer(document: &str) -> NodeListDeserializer<NodeDocumentProcessor<'_>> {
-    NodeListDeserializer {
-        processor: NodeDocumentProcessor::new(document),
-    }
-}
-
-/// Deserializer for deserializing a Node list (such as a document or children).
-/// Generally can only be used to deserialize sequences (maps, seqs, etc).
-pub struct NodeListDeserializer<T> {
-    processor: T,
-}
+use helpers::{EmptyDeserializer, StringDeserializer, ValueDeserializer};
 
 #[derive(Debug, Clone, Error)]
 pub enum Error {
@@ -65,6 +55,9 @@ pub enum Error {
     #[error("attempted to parse a non-unit enum variant from a plain KDL value")]
     UnitVariantRequired,
 
+    #[error("attempted to deserialize a node into a struct of the wrong name")]
+    NodeNameMismatch,
+
     #[error("error")]
     Custom(String),
 }
@@ -84,109 +77,18 @@ impl de::Error for Error {
     }
 }
 
-impl<'de, 'p, T> de::Deserializer<'de> for NodeListDeserializer<T>
-where
-    T: NodeListProcessor<'de, 'p>,
-{
-    type Error = Error;
-
-    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        Err(Error::AtNodeList)
-    }
-
-    // Generally we can only parse structured types, like lists and maps, from
-    // a node list. Primitives are no good.
-    forward_to_deserialize_any! {
-        bool
-        i8 i16 i32 i64
-        u8 u16 u32 u64
-        f32 f64
-        char str string bytes byte_buf
-        option unit unit_struct
-        enum identifier
-    }
-
-    fn deserialize_newtype_struct<V>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        visitor.visit_newtype_struct(self)
-    }
-
-    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        visitor.visit_seq(NodeListSeqAccess::new(self.processor))
-    }
-
-    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.deserialize_seq(visitor)
-    }
-
-    fn deserialize_tuple_struct<V>(
-        self,
-        _name: &'static str,
-        len: usize,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.deserialize_tuple(len, visitor)
-    }
-
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_struct<V>(
-        self,
-        _name: &'static str,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.deserialize_map(visitor)
-    }
-
-    // Parse the entire node list
-    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        self.processor.drain().map_err(Error::from_parse_error)?;
-        visitor.visit_unit()
-    }
-}
-
-enum NodeListSequenceState<'de> {
+enum NodeListSequenceState {
     /// We're interpreting this as a flat list:
     ///
     /// ```kdl
-    /// item 10
-    /// item 11
-    /// item 12
+    /// item abc
+    /// item def
+    /// ghi
     /// ```
     ///
     /// We've picked out the node identifier. Nodes that don't use this
     /// identifier are in error.
-    FlatList(KdlString<'de>),
+    FlatList,
 
     /// We're interpreting this as a string list, where the node identifiers
     /// themselves are the values:
@@ -201,18 +103,6 @@ enum NodeListSequenceState<'de> {
     ///
     /// This might also be promoted to an enum list
     StringList,
-
-    /// We're interpreting this as an enum list, where the node identifiers
-    /// are enum discriminants:
-    ///
-    /// ```kdl
-    /// Names {
-    ///     Nothing
-    ///     Pair 1 2
-    ///     Only 1
-    /// }
-    /// ```
-    EnumList,
 }
 
 fn expect_node_completed<'i, 'p>(processor: NodeProcessor<'i, 'p>) -> Result<(), Error> {
@@ -233,72 +123,20 @@ fn expect_node_list_completed<'i, 'p>(
     }
 }
 
-struct NodeListSeqAccess<'de, T> {
-    processor: T,
-    state: Option<NodeListSequenceState<'de>>,
+trait NodeDeserializerStateReceiver {
+    fn receive_flatlist(self);
+    fn receive_stringlist(self) -> Result<(), Error>;
 }
 
-impl<'de, 'p, T> NodeListSeqAccess<'de, T>
-where
-    T: NodeListProcessor<'de, 'p>,
-{
-    fn new(processor: T) -> Self {
-        Self {
-            processor,
-            state: None,
-        }
-    }
-}
-
-impl<'de, 'p, T> de::SeqAccess<'de> for NodeListSeqAccess<'de, T>
-where
-    T: NodeListProcessor<'de, 'p>,
-{
-    type Error = Error;
-
-    fn next_element_seed<S>(&mut self, seed: S) -> Result<Option<S::Value>, Self::Error>
-    where
-        S: de::DeserializeSeed<'de>,
-    {
-        let node = self
-            .processor
-            .next_node()
-            .map_err(Error::from_parse_error)?;
-
-        match node {
-            Some((name, processor)) => match self.state {
-                None => seed
-                    .deserialize(BeginSeqNodeDeserializer {
-                        name,
-                        processor,
-                        state: &mut self.state,
-                    })
-                    .map(Some),
-                Some(ref mut state) => {
-                    let mut fake_state = None;
-                    seed.deserialize(BeginSeqNodeDeserializer {
-                        name,
-                        processor,
-                        state: &mut fake_state,
-                    })
-                    .map(Some)
-                }
-            },
-            None => Ok(None),
-        }
-    }
-}
-
-/// Deserializer for a single node as part of a SeqAccess. This is the first
-/// node in the sequence and is responsible for trying to detect the node list
-/// pattern we're using.
-struct BeginSeqNodeDeserializer<'p, 'de> {
+/// Deserializer for a single node where we haven't handled the node name yet.
+/// The node name may be handled as a string, enum variant, or struct name.
+struct NamedNodeDeserializer<'p, 'de, R: NodeDeserializerStateReceiver> {
     processor: NodeProcessor<'de, 'p>,
-    state: &'p mut Option<NodeListSequenceState<'de>>,
-    name: KdlString<'de>,
+    state: R,
+    node_name: KdlString<'de>,
 }
 
-impl<'p, 'de> BeginSeqNodeDeserializer<'p, 'de> {
+impl<'p, 'de, R: NodeDeserializerStateReceiver> NamedNodeDeserializer<'p, 'de, R> {
     /// Deserialize a bool, int, etc. Doesn't handle strings or nulls, those
     /// are separate (because they can have a wider range of representations).
     /// This is specifically for cases where the state unconditionally becomes
@@ -308,7 +146,7 @@ impl<'p, 'de> BeginSeqNodeDeserializer<'p, 'de> {
     where
         V: de::Visitor<'de>,
     {
-        *self.state = Some(NodeListSequenceState::FlatList(self.name));
+        self.state.receive_flatlist();
 
         match self
             .processor
@@ -324,9 +162,25 @@ impl<'p, 'de> BeginSeqNodeDeserializer<'p, 'de> {
             NodeEvent::End => visitor.visit_unit(),
         }
     }
+
+    fn check_struct_name(
+        self,
+        name: &'static str,
+    ) -> Result<BlankNodeDeserializer<'p, 'de>, Error> {
+        if self.node_name == name {
+            self.state.receive_flatlist();
+            Ok(BlankNodeDeserializer {
+                processor: self.processor,
+            })
+        } else {
+            Err(Error::NodeNameMismatch)
+        }
+    }
 }
 
-impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
+impl<'de, R: NodeDeserializerStateReceiver> de::Deserializer<'de>
+    for NamedNodeDeserializer<'_, 'de, R>
+{
     type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -432,7 +286,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
             .map_err(Error::from_parse_error)?
         {
             NodeEvent::Value(value, processor) => {
-                *self.state = Some(NodeListSequenceState::FlatList(self.name));
+                self.state.receive_flatlist();
                 expect_node_completed(processor)?;
                 KdlValue::visit_to(value, visitor)
             }
@@ -441,8 +295,8 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
             }
             NodeEvent::Children(_processor) => Err(Error::UnexpectedChildren),
             NodeEvent::End => {
-                *self.state = Some(NodeListSequenceState::StringList);
-                self.name.visit_to(visitor)
+                self.state.receive_stringlist()?;
+                self.node_name.visit_to(visitor)
             }
         }
     }
@@ -476,7 +330,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
 
         match peek.next_event().map_err(Error::from_parse_error)? {
             NodeEvent::Value(RecognizedValue::Null, _) | NodeEvent::End => {
-                *self.state = Some(NodeListSequenceState::FlatList(self.name));
+                self.state.receive_flatlist();
 
                 match self
                     .processor
@@ -508,7 +362,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
         {
             NodeEvent::Value(value, processor) => {
                 expect_node_completed(processor)?;
-                *self.state = Some(NodeListSequenceState::FlatList(self.name));
+                self.state.receive_flatlist();
                 KdlValue::visit_to(value, visitor)
             }
             NodeEvent::Property(RecognizedProperty { .. }, _processor) => {
@@ -516,33 +370,32 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
             }
             NodeEvent::Children(_processor) => Err(Error::UnexpectedChildren),
             NodeEvent::End => {
-                *self.state = Some(NodeListSequenceState::FlatList(self.name));
+                self.state.receive_flatlist();
                 visitor.visit_unit()
             }
         }
     }
 
     fn deserialize_unit_struct<V>(
-        self,
-        _name: &'static str,
+        mut self,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        self.deserialize_unit(visitor)
+        self.check_struct_name(name)?.deserialize_unit(visitor)
     }
 
     fn deserialize_newtype_struct<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        // TODO: check the newtype's struct name against the node name
-        // but only if this is a flat list and not an enum or string list
+        self.check_struct_name(name)?;
         visitor.visit_newtype_struct(self)
     }
 
@@ -550,7 +403,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     where
         V: de::Visitor<'de>,
     {
-        *self.state = Some(NodeListSequenceState::FlatList(self.name));
+        *self.state = Some(NodeListSequenceState::FlatList);
 
         match self
             .processor
@@ -607,7 +460,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     where
         V: de::Visitor<'de>,
     {
-        *self.state = Some(NodeListSequenceState::FlatList(self.name));
+        *self.state = Some(NodeListSequenceState::FlatList(self.node_name));
 
         match self
             .processor
@@ -645,7 +498,7 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     where
         V: de::Visitor<'de>,
     {
-        *self.state = Some(NodeListSequenceState::FlatList(self.name));
+        *self.state = Some(NodeListSequenceState::FlatList(self.node_name));
 
         let mut collect_values = CollectRule::Done;
         let mut collect_properties = CollectRule::Dont;
@@ -710,150 +563,6 @@ impl<'de> de::Deserializer<'de> for BeginSeqNodeDeserializer<'_, 'de> {
     {
         self.processor.drain().map_err(Error::from_parse_error)?;
         visitor.visit_unit()
-    }
-}
-
-trait Unexpected<'p, 'de> {
-    fn value(&mut self) -> Result<(), Error>;
-    fn property(&mut self) -> Result<(), Error>;
-    fn children(&mut self, children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error>;
-}
-
-struct UnexpectedIsError;
-
-impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedIsError {
-    #[inline]
-    fn value(&mut self) -> Result<(), Error> {
-        Err(Error::UnexpectedValue)
-    }
-
-    #[inline]
-    fn property(&mut self) -> Result<(), Error> {
-        Err(Error::UnexpectedProperty)
-    }
-
-    #[inline]
-    fn children(&mut self, _children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
-        Err(Error::UnexpectedChildren)
-    }
-}
-
-struct UnexpectedPermissive;
-
-impl<'p, 'de> Unexpected<'p, 'de> for UnexpectedPermissive {
-    fn value(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn property(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn children(&mut self, _children: NodeChildrenProcessor<'de, 'p>) -> Result<(), Error> {
-        // In this case we don't consume children, on the assumption that this
-        // is being used in a forked processor
-        Ok(())
-    }
-}
-
-/// Deserialize a plain list of values into a sequence (like a Vec).
-struct ValuesSeqAccess<'p, 'de, U: Unexpected<'p, 'de>> {
-    first: Option<KdlValue<'de>>,
-    processor: Option<NodeProcessor<'de, 'p>>,
-    skip_rule: U,
-}
-
-impl<'p, 'de, U: Unexpected<'p, 'de>> SeqAccess<'de> for &mut ValuesSeqAccess<'p, 'de, U> {
-    type Error = Error;
-
-    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
-    where
-        T: de::DeserializeSeed<'de>,
-    {
-        loop {
-            break match self.first.take() {
-                Some(value) => seed.deserialize(ValueDeserializer::new(value)).map(Some),
-                None => match self.processor.take() {
-                    None => Ok(None),
-                    Some(processor) => {
-                        match processor.next_event().map_err(Error::from_parse_error)? {
-                            NodeEvent::Value(value, processor) => {
-                                self.processor = Some(processor);
-                                seed.deserialize(ValueDeserializer::new(value)).map(Some)
-                            }
-                            NodeEvent::Property(RecognizedProperty { .. }, processor) => {
-                                self.processor = Some(processor);
-                                self.skip_rule.property()?;
-                                continue;
-                            }
-                            NodeEvent::Children(children) => {
-                                self.skip_rule.children(children)?;
-                                Ok(None)
-                            }
-                            NodeEvent::End => Ok(None),
-                        }
-                    }
-                },
-            };
-        }
-    }
-}
-
-/// Deserialize a plain list of properties into a map (like a HashMap). Other
-/// events (values, children) are errors.
-struct PropertiesMapAccess<'p, 'de, U: Unexpected<'p, 'de>> {
-    first_key: Option<KdlString<'de>>,
-    value: Option<KdlValue<'de>>,
-    processor: Option<NodeProcessor<'de, 'p>>,
-    skip_rule: U,
-}
-
-impl<'p, 'de, U: Unexpected<'p, 'de>> MapAccess<'de> for PropertiesMapAccess<'p, 'de, U> {
-    type Error = Error;
-
-    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
-    where
-        K: de::DeserializeSeed<'de>,
-    {
-        loop {
-            break match self.first_key.take() {
-                Some(key) => seed.deserialize(StringDeserializer::new(key)).map(Some),
-                None => match self.processor.take() {
-                    None => Ok(None),
-                    Some(processor) => {
-                        match processor.next_event().map_err(Error::from_parse_error)? {
-                            NodeEvent::Property(property, processor) => {
-                                self.processor = Some(processor);
-                                self.value = Some(property.value);
-                                seed.deserialize(StringDeserializer::new(property.key))
-                                    .map(Some)
-                            }
-                            NodeEvent::Value((), processor) => {
-                                self.processor = Some(processor);
-                                self.skip_rule.value()?;
-                                continue;
-                            }
-                            NodeEvent::Children(children) => {
-                                self.skip_rule.children(children)?;
-                                Ok(None)
-                            }
-                            NodeEvent::End => Ok(None),
-                        }
-                    }
-                },
-            };
-        }
-    }
-
-    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::DeserializeSeed<'de>,
-    {
-        seed.deserialize(ValueDeserializer::new(
-            self.value
-                .take()
-                .expect("called next_value_seed out of order"),
-        ))
     }
 }
 
