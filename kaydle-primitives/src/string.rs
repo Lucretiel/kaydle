@@ -24,8 +24,6 @@ use nom_supreme::{
 };
 use serde::{de, Deserialize, Serialize};
 
-use crate::util::back;
-
 /// A KDL string, parsed from an identifier, escaped string, or raw string.
 /// Exists in either Owned or Borrowed form, depending on whether there were
 /// excapes in the string
@@ -280,10 +278,6 @@ pub fn parse_raw_string<'i, E: ParseError<&'i str>>(input: &'i str) -> IResult<&
 where
     E: ParseError<&'i str>,
 {
-    // The very end the input (an empty string), used for certain error
-    // reports
-    let eof_location = back(input);
-
     let (input, hash_count) =
         parse_separated_terminated(char('#'), success(()), char('"'), || 0, |n, _c| n + 1)
             .or(char('"').value(0))
@@ -297,8 +291,8 @@ where
             // Couldn't find any quotes; need more input
             None => {
                 return Err(NomErr::Error(E::or(
-                    make_error(eof_location, ErrorKind::Eof),
-                    E::from_char(eof_location, '"'),
+                    make_error("", ErrorKind::Eof),
+                    E::from_char("", '"'),
                 )))
             }
 
@@ -312,8 +306,8 @@ where
                     match shifter.tail().as_bytes().get(0) {
                         None => {
                             return Err(NomErr::Error(E::or(
-                                make_error(eof_location, ErrorKind::Eof),
-                                E::from_char(eof_location, '#'),
+                                make_error("", ErrorKind::Eof),
+                                E::from_char("", '#'),
                             )))
                         }
                         Some(b'#') => shifter.shift(1),
@@ -472,14 +466,10 @@ fn parse_unescaped_chunk<'i, E>(input: &'i str) -> IResult<&'i str, &'i str, E>
 where
     E: ParseError<&'i str>,
 {
-    // The very end the input (an empty string), used for certain error
-    // reports
-    let eof_location = back(input);
-
     match memchr2(b'"', b'\\', input.as_bytes()) {
         None => Err(NomErr::Error(E::or(
-            make_error(eof_location, ErrorKind::Eof),
-            E::from_char(eof_location, '"'),
+            make_error("", ErrorKind::Eof),
+            E::from_char("", '"'),
         ))),
 
         Some(0) => Err(NomErr::Error(make_error(input, ErrorKind::TakeWhile1))),

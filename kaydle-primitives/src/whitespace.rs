@@ -15,7 +15,7 @@ use nom_supreme::{
     ParserExt,
 };
 
-use crate::util::{at_least_one, back};
+use crate::util::at_least_one;
 
 enum BlockCommentTag {
     Start,
@@ -29,8 +29,6 @@ where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
 {
-    let back = back(input);
-
     loop {
         let event = input
             .as_bytes()
@@ -45,8 +43,8 @@ where
         match event {
             None => {
                 return Err(NomErr::Error(E::or(
-                    make_error(back, ErrorKind::Eof),
-                    E::from_tag(back, "*/"),
+                    make_error("", ErrorKind::Eof),
+                    E::from_tag("", "*/"),
                 )))
             }
             Some((i, BlockCommentTag::End)) => return Ok((&input[i + 2..], ())),
@@ -137,7 +135,7 @@ where
         .char_indices()
         .find_map(|(i, c)| is_newline(c).then(|| i))
     {
-        None => Ok((back(input), ())),
+        None => Ok(("", ())),
         Some(i) => {
             let input = &input[i..];
             parse_newline(input)

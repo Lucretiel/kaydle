@@ -1,11 +1,6 @@
 use nom::Err as NomErr;
 use nom::Parser;
 
-#[inline(always)]
-pub fn back(input: &str) -> &str {
-    &input[input.len()..]
-}
-
 /// Run a parser as many times as it will succeed, at least once. Discard the
 /// parser results.
 pub fn at_least_one<I, O, E>(mut parser: impl Parser<I, O, E>) -> impl Parser<I, (), E>

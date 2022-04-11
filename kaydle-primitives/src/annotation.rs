@@ -1,7 +1,9 @@
 use std::char::CharTryFromError;
 
 use nom::{
+    branch::alt,
     character::complete::char,
+    combinator::success,
     error::{ContextError, FromExternalError, ParseError},
     IResult, Parser,
 };
@@ -12,6 +14,7 @@ use crate::{
     value::KdlValue,
 };
 
+/// Parse an annotation, which is an identifier enclosed in parentheses.
 pub fn parse_annotation<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
 where
     E: ParseError<&'i str>,
@@ -27,52 +30,92 @@ where
         .parse(input)
 }
 
+/// Trait for annotations. An annotation is essentially an optional string;
+/// this trait allows for abstracting over cases where the caller doesn't care
+/// about the annotation, or only cares about the *presence* of an annotation.
+/// Used as the return type for [`parse_maybe_annotation`].
 pub trait AnnotationBuilder<'i> {
+    /// String type for the annotation
     type String: StringBuilder<'i>;
 
+    /// There was no annotation
     #[must_use]
-    fn build(annotation: Option<Self::String>) -> Self;
+    fn absent() -> Self;
+
+    /// There was an annotation
+    #[must_use]
+    fn annotated(annotation: Self::String) -> Self;
 }
 
+/// The unit type can be used as an annotation type in cases where the caller
+/// doesn't care about the presence or value of an annotation.
 impl<'i> AnnotationBuilder<'i> for () {
     type String = ();
 
-    #[inline]
     #[must_use]
-    fn build(_annotation: Option<()>) -> Self {}
-}
-
-impl<'i> AnnotationBuilder<'i> for bool {
-    type String = ();
-
     #[inline]
+    fn absent() -> Self {}
+
     #[must_use]
-    fn build(annotation: Option<()>) -> Self {
-        annotation.is_some()
-    }
+    #[inline]
+    fn annotated(_annotation: Self::String) -> Self {}
 }
 
 impl<'i, S: StringBuilder<'i>> AnnotationBuilder<'i> for Option<S> {
     type String = S;
 
-    #[inline]
     #[must_use]
-    fn build(annotation: Option<S>) -> Self {
-        annotation
+    #[inline]
+    fn absent() -> Self {
+        None
+    }
+
+    #[must_use]
+    #[inline]
+    fn annotated(annotation: Self::String) -> Self {
+        Some(annotation)
     }
 }
 
-/// An annotated object of some kind
+/// Try to parse an annotation, but succeed if there is none present. Uses
+/// [`AnnotationBuilder`] as a return type. Returns an error if the opening
+/// parenthesis exists but an error occurred inside.
+pub fn parse_maybe_annotation<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
+where
+    E: ParseError<&'i str>,
+    E: TagError<&'i str, &'static str>,
+    E: FromExternalError<&'i str, CharTryFromError>,
+    E: ContextError<&'i str>,
+    T: AnnotationBuilder<'i>,
+{
+    alt((
+        parse_annotation.map(T::annotated),
+        success(()).map(|()| T::absent()),
+    ))
+    .parse(input)
+}
+
+/// An annotated object of some kind. Contains some `item` as well as an
+/// associated annotation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GenericAnnotated<A, T> {
     pub annotation: A,
     pub item: T,
 }
 
+/// A recognized annotated doesn't contain any data; it's used in cases where
+/// the caller wants to parse and discard something with an annotation.
 pub type RecognizedAnnotation = GenericAnnotated<(), ()>;
+
+/// A normal annotated value uses an `Option<KdlString>` as its annotation
+/// type.
 pub type Annotated<'i, T> = GenericAnnotated<Option<KdlString<'i>>, T>;
+
+/// An annotated [`KdlValue`].
 pub type AnnotatedValue<'i> = Annotated<'i, KdlValue<'i>>;
 
+/// Modify a parser to include an optional preceding annotation, parsing it
+/// and the value itself into a [`GenericAnnotated`].
 pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
 where
     A: AnnotationBuilder<'i>,
@@ -82,16 +125,13 @@ where
     E: FromExternalError<&'i str, CharTryFromError>,
     E: ContextError<&'i str>,
 {
-    parse_annotation
-        .opt()
-        .map(A::build)
+    parse_maybe_annotation
         .context("annotation")
         .and(parser)
         .map(|(annotation, item)| GenericAnnotated { annotation, item })
 }
 
 #[cfg(test)]
-#[allow(clippy::bool_assert_comparison)]
 mod tests {
     use nom::error::Error;
     use nom_supreme::tag::complete::tag;
@@ -172,13 +212,6 @@ mod tests {
         type: (),
         absent: (),
         present: (),
-    }
-
-    test! {
-        name: boolean,
-        type: bool,
-        absent: false,
-        present: true,
     }
 
     test! {
