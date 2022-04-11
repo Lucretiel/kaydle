@@ -198,8 +198,8 @@ where
                 .map(InternalNodeEvent::Argument)
                 .context("value"),
         ))
-        // Parse children or a node terminator, preceded by 0 or more whitespace
         .preceded_by(parse_node_space),
+        // Parse children or a node terminator, preceded by 0 or more whitespace
         alt((
             char('{')
                 .map(|_| InternalNodeEvent::Children)
@@ -284,28 +284,17 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
         E: FromExternalError<&'i str, CharTryFromError>,
         E: ContextError<&'i str>,
     {
-        // TODO: this function is very convoluted due to borrow checker
-        // limitations. Refactor when polonius lands.
-        let state = match self.state.take() {
-            None => return Ok(None),
-            Some(state) => state,
-        };
-
-        let maybe_parse_child_node = parse_node_start(char('}').value(()));
-
-        let name = match run_parser_on(state, maybe_parse_child_node)? {
-            None => return Ok(None),
-            Some(name) => name,
-        };
-
-        self.state = Some(state);
-
-        match self.state.as_mut() {
-            Some(state) => Ok(Some(NodeItem {
-                name,
-                content: NodeProcessor { state: *state },
-            })),
-            None => unreachable!(),
+        match self.state.take() {
+            None => Ok(None),
+            Some(state) => match run_parser_on(state, parse_node_start(char('}').value(())))? {
+                None => Ok(None),
+                Some(name) => Ok(Some(NodeItem {
+                    name,
+                    content: NodeProcessor {
+                        state: *self.state.insert(state),
+                    },
+                })),
+            },
         }
     }
 }
