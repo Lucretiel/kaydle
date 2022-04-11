@@ -297,15 +297,10 @@ where
 
     let mut shifter = SliceShifter::new(input);
 
-    'outer: loop {
+    loop {
         match memchr(b'"', shifter.tail().as_bytes()) {
             // Couldn't find any quotes; need more input
-            None => {
-                return Err(NomErr::Error(E::or(
-                    make_error("", ErrorKind::Eof),
-                    E::from_char("", '"'),
-                )))
-            }
+            None => return Err(NomErr::Error(make_error("", ErrorKind::Eof))),
 
             // Found a quote; search the successor bytes for hashes
             Some(quote_idx) => {
@@ -313,20 +308,20 @@ where
                 let payload = shifter.head();
                 shifter.shift(1);
 
-                for _ in 0..hash_count {
-                    match shifter.tail().as_bytes().get(0) {
-                        None => {
-                            return Err(NomErr::Error(E::or(
-                                make_error("", ErrorKind::Eof),
-                                E::from_char("", '#'),
-                            )))
+                match shifter.tail().as_bytes().get(0..hash_count) {
+                    // Bounds error here means the input isn't large enough to
+                    // contain the hash bytes; this is an unexpected EoF
+                    None => return Err(NomErr::Error(make_error("", ErrorKind::Eof))),
+
+                    // Found our chunk; if it's all hashes, this is the end of
+                    // the string
+                    Some(chunk) => {
+                        if chunk.iter().all(|&b| b == b'#') {
+                            shifter.shift(hash_count);
+                            return Ok((shifter.tail(), payload));
                         }
-                        Some(b'#') => shifter.shift(1),
-                        Some(..) => continue 'outer,
                     }
                 }
-
-                return Ok((shifter.tail(), payload));
             }
         }
     }
