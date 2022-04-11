@@ -1,6 +1,6 @@
 [package]
 name = "kaydle-primitives"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 authors = ["Nathan West <Lucretiel@gmail.com>"]
 
