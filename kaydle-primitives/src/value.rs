@@ -1,3 +1,8 @@
+/*!
+Parsers and utility types related to parsing primitive values. Values can
+be `null`, `true`, `false`, a number, or a string.
+*/
+
 use std::{
     char::CharTryFromError,
     fmt::{self, Formatter},
@@ -18,17 +23,30 @@ use crate::{
     string::{parse_string, KdlString, StringBuilder},
 };
 
-/// An arbitrary KDL Value
+/// An arbitrary KDL Value. See also [`AnnotatedValue`][crate::annotation::AnnotatedValue]
+/// for a value that includes an optional annotation.
 #[derive(Debug, Clone)]
 pub enum GenericValue<N, S> {
+    /// `null`
     Null,
+
+    /// `true` or `false`
     Bool(bool),
+
+    /// A number
     Number(N),
+
+    /// A string
     String(S),
 }
 
+/// A normal KDL value, containing a [`KdlNumber`] and [`KdlString`].
 pub type KdlValue<'a> = GenericValue<KdlNumber, KdlString<'a>>;
 
+/// A recognized KDL value. Used in cases where the caller cares about the type
+/// of the value, but not its content; in particular it's intended to allow
+/// parsers to avoid the complex runtime costs & allocations of parsing a
+/// string or a number in cases where we don't need the value.
 pub type RecognizedValue = GenericValue<(), ()>;
 
 impl<'a> KdlValue<'a> {
@@ -136,13 +154,27 @@ impl<'de> Deserialize<'de> for KdlValue<'de> {
     }
 }
 
+/// Trait for building primitive KDL values. Used to abstract over cases where
+/// the caller might not care about the actual content of the value. Used as
+/// the return value for [`parse_bare_value`].
 pub trait ValueBuilder<'a> {
+    /// The number type used in this value.
     type Number: NumberBuilder;
+
+    /// The string type used in this value.
     type String: StringBuilder<'a>;
 
+    /// Build a KDL value from `null`.
+
     fn from_null() -> Self;
+
+    /// Build a KDL value from `true` or `false`.
     fn from_bool(value: bool) -> Self;
+
+    /// Build a KDL value from a number.
     fn from_number(value: Self::Number) -> Self;
+
+    /// Build a KDL value from a string.
     fn from_string(value: Self::String) -> Self;
 }
 
@@ -171,6 +203,8 @@ where
     }
 }
 
+/// The unit type can be used as an annotation type in cases where the caller
+/// doesn't care about the actual content of the value.
 impl ValueBuilder<'_> for () {
     type Number = ();
     type String = ();
@@ -181,6 +215,8 @@ impl ValueBuilder<'_> for () {
     fn from_string(_value: Self::String) {}
 }
 
+/// Parse any one KDL value. See also [`parse_value`], which includes an
+/// annotation.
 pub fn parse_bare_value<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
 where
     T: ValueBuilder<'i>,
@@ -199,6 +235,7 @@ where
     .parse(input)
 }
 
+/// Parse any one KDL value with an optional preceding annotation.
 pub fn parse_value<'i, T, A, E>(input: &'i str) -> IResult<&'i str, GenericAnnotated<A, T>, E>
 where
     T: ValueBuilder<'i>,

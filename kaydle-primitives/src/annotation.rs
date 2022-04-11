@@ -1,3 +1,9 @@
+/*!
+Parsers and types related to annotations, which are optional string tags that
+can precede nodes and values. Usually used for type hinting, especially in
+dynamic languages.
+*/
+
 use std::char::CharTryFromError;
 
 use nom::{
@@ -99,7 +105,10 @@ where
 /// associated annotation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GenericAnnotated<A, T> {
+    /// The annotation
     pub annotation: A,
+
+    /// The thing being annotated
     pub item: T,
 }
 

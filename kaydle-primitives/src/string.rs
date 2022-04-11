@@ -1,3 +1,7 @@
+/*!
+Parsers and utility types for parsing KDL strings and identifiers.
+ */
+
 use std::{
     borrow::Cow,
     char::CharTryFromError,
@@ -26,33 +30,40 @@ use serde::{de, Deserialize, Serialize};
 
 /// A KDL string, parsed from an identifier, escaped string, or raw string.
 /// Exists in either Owned or Borrowed form, depending on whether there were
-/// excapes in the string
+/// escapes in the string. Doesn't track the origin of the string (identifier,
+/// escaped, or raw), because KDL semantics treat them all identically.
 #[derive(Debug, Clone, Eq)]
 pub struct KdlString<'a> {
     inner: Cow<'a, str>,
 }
 
 impl<'a> KdlString<'a> {
+    /// Create a new, empty KDL String
     pub fn new() -> Self {
         Self::from_borrowed("")
     }
 
+    /// Create a KDL string from a `Cow<str>`.
     pub fn from_cow(cow: Cow<'a, str>) -> Self {
         Self { inner: cow }
     }
 
+    /// Create a borrowed KDL string
     pub fn from_borrowed(s: &'a str) -> Self {
         Self::from_cow(Cow::Borrowed(s))
     }
 
+    /// Create an owned KDL string
     pub fn from_string(s: String) -> Self {
         Self::from_cow(Cow::Owned(s))
     }
 
+    /// Convert this unconditionally into an owned string.
     pub fn into_string(self) -> String {
         self.inner.into_owned()
     }
 
+    /// Get the `&str` contained in this string.
     pub fn as_str(&self) -> &str {
         self
     }

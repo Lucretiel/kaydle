@@ -1,3 +1,13 @@
+/*!
+This crate contains parsers and other low-level helper types for handling
+[KDL](https://kdl.dev/) documents. It is a complete but highly skeletal KDL
+implementation, suitable for use by KDL crate authors to provide higher level
+access to KDL data. Unless you're working on a KDL implementation, you should
+probably not be using this crate.
+*/
+
+#![deny(missing_docs)]
+
 use nom::{branch::alt, error::ParseError, IResult, Parser};
 use nom_supreme::{
     tag::{complete::tag, TagError},

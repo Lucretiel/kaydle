@@ -1,3 +1,28 @@
+/*!
+Parsers and utility types for parsing KDL numbers. While KDL doesn't distinguish
+between floats and integers, or signed and unsigned numbers, this module uses
+some simple logic to detect different integer types, to aid with deserialization.
+
+# Number type logic
+
+Currently, we use a simple set of rules to decide if a KDL number should be
+parsed as an [`i64`], [`u64`], or [`f64`]:
+
+- If the number contains a fractional part or exponent, it's unconditionally
+parsed as an `f64`.
+- Otherwise, if it's negative, it's parsed as an `i64`.
+- Otherwise, it's parsed as a `u64`.
+
+These rules may change in the future. Possible improvements:
+
+- If it includes an exponent, it might be an integer, even if it includes a
+fractional parts.
+- If it's an integer but it overflows an `i64` or `u64`, it could be stored in
+an `f64` instead.
+- It's also possible we could use type hints (from serde or KDL annotations) to
+guide the parse as well.
+*/
+
 use arrayvec::ArrayString;
 use memchr::memchr3;
 use nom::{
@@ -16,18 +41,30 @@ use serde::{de, Deserialize, Serialize};
 
 use crate::util::at_least_one;
 
-/// Helper trait for building or recognizing integers
+/// Helper trait for building or recognizing integers.
 pub trait IntBuilder: Sized {
-    fn add_digit(self, digit: u32, radix: u32) -> Result<Self, BoundsError>;
+    /// Create a new int. The digits appended by [`add_digit`][Self::add_digit]
+    /// will increase the magnitude of the number positively or negatively,
+    /// depending on the `sign`.
     fn start(sign: Sign) -> Self;
+
+    /// Append a digit to this number.
+    fn add_digit(self, digit: u32, radix: u32) -> Result<Self, BoundsError>;
 }
 
+/// A KDL integer, which is either signed or unsigned. In practice, we always
+/// parse positive integers as unsigned and negative integers as signed.
 #[derive(Debug, Clone, Copy, Hash)]
 pub enum KdlInt {
+    /// A signed integer. Returned by the parser if the number was negative.
     Signed(i64),
+
+    /// A signed integer. Returned by the parser if the number was positive.
     Unsigned(u64),
 }
 
+/// A Bounds error occurred during number parsing. This type is incomplete and
+/// will grow in the future.
 pub struct BoundsError;
 
 impl IntBuilder for KdlInt {
@@ -59,6 +96,8 @@ impl IntBuilder for KdlInt {
     }
 }
 
+/// The empty tuple can be used as an integer builder in cases where it's only
+/// necessary to recognize the presence of a number and not to parse it.
 impl IntBuilder for () {
     fn add_digit(self, _digit: u32, _radix: u32) -> Result<Self, BoundsError> {
         Ok(())
@@ -67,9 +106,13 @@ impl IntBuilder for () {
     fn start(_sign: Sign) -> Self {}
 }
 
+/// The parsed sign of a number
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sign {
+    /// Positive, `+`. No sign character is assumed positive.
     Positive,
+
+    /// Negative, `-`.
     Negative,
 }
 
@@ -212,15 +255,26 @@ where
     .parse(input)
 }
 
+/// Trait for building KDL numbers
 pub trait NumberBuilder: Sized {
+    /// Inner type for building integers specifically. Used for binary, hex,
+    /// and octal numbers, because we parse them manually (because the `0x`
+    /// prefix isn't recognized by [`from_radix`][i32::from_str_radix])
     type IntForm: IntBuilder;
 
+    /// Parse a decimal number from a string. This may have a fractional or
+    /// exponent component, and may have a sign. Digits may be separated by `_`.
     fn from_str(input: &str) -> Result<Self, BoundsError>;
+
+    /// Receive a parsed integer
     fn from_int(input: Self::IntForm) -> Self;
 }
 
+/// The empty tuple can be used as an number builder in cases where it's only
+/// necessary to recognize the presence of a number and not to parse it.
 impl NumberBuilder for () {
     type IntForm = ();
+
     fn from_str(_input: &str) -> Result<Self, BoundsError> {
         Ok(())
     }
@@ -268,10 +322,23 @@ impl NumberBuilder for KdlNumber {
     }
 }
 
+/// A KDL Number. The KDL spec doesn't distinguish between integers and floats,
+/// or between signed an unsigned numbers, but kaydle uses a heuristic to pick
+/// a type for deserialization purposes.
 #[derive(Debug, Copy, Clone)]
 pub enum KdlNumber {
+    /// A signed integer; returned by the parser if the number was negative and
+    /// had no fractional component or exponent.
     Signed(i64),
+
+    /// An unsigned integer; returned by the parser if the number was positive
+    /// or unsigned and had no fractional component or exponent.
     Unsigned(u64),
+
+    /// A floating point number; used unconditionally if the number contained
+    /// a fractional component or exponent. Right now this applies even if the
+    /// final parser ends up being an integer (eg, 1.12e5); this may change in
+    /// the future.
     Float(f64),
 }
 

@@ -1,3 +1,9 @@
+/*!
+Parser and container type for KDL properties. A property is a key-value pair,
+where a key is a KDL identifier and a value is a (possibly annotated) KDL value,
+separated by `=`.
+ */
+
 use std::char::CharTryFromError;
 
 use nom::{
@@ -14,13 +20,19 @@ use crate::{
     value::{parse_value, KdlValue, ValueBuilder},
 };
 
+/// A property, containing a key and potentially annotated value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GenericProperty<K, A, V> {
+    /// The key
     pub key: K,
+
+    /// The value, with its annotation
     pub value: GenericAnnotated<A, V>,
 }
 
-pub type Property<'a> = GenericProperty<KdlString<'a>, KdlString<'a>, KdlValue<'a>>;
+/// A normal property, where the key is a [`KdlString`], the value is a
+/// [`KdlValue`], and the value's annotation is an `Option<KdlString>`.
+pub type Property<'a> = GenericProperty<KdlString<'a>, Option<KdlString<'a>>, KdlValue<'a>>;
 
 /// A Recognized Property is a property that retains no data. It's useful in
 /// cases where you want to note that a property has successfully been parsed,
@@ -28,6 +40,7 @@ pub type Property<'a> = GenericProperty<KdlString<'a>, KdlString<'a>, KdlValue<'
 /// strings or values.
 pub type RecognizedProperty = GenericProperty<(), (), ()>;
 
+/// Parse any KDL property, which is a key-value pair, separated by `=`.
 pub fn parse_property<'i, K, A, V, E>(
     input: &'i str,
 ) -> IResult<&'i str, GenericProperty<K, A, V>, E>
