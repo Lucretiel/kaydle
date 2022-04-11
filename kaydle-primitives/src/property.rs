@@ -1,4 +1,4 @@
-use std::{char::CharTryFromError, num::ParseIntError};
+use std::char::CharTryFromError;
 
 use nom::{
     character::complete::char,
@@ -8,32 +8,35 @@ use nom::{
 use nom_supreme::{tag::TagError, ParserExt};
 
 use crate::{
+    annotation::{Annotated, AnnotationBuilder},
     number::BoundsError,
     string::{parse_identifier, KdlString, StringBuilder},
-    value::{parse_value, KdlValue, ValueBuilder},
+    value::{parse_annotated_value, KdlValue, ValueBuilder},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GenericProperty<K, V> {
+pub struct GenericProperty<K, A, V> {
     pub key: K,
-    pub value: V,
+    pub value: Annotated<A, V>,
 }
 
-pub type Property<'a> = GenericProperty<KdlString<'a>, KdlValue<'a>>;
+pub type Property<'a> = GenericProperty<KdlString<'a>, KdlString<'a>, KdlValue<'a>>;
 
 /// A Recognized Property is a property that retains no data. It's useful in
 /// cases where you want to note that a property has successfully been parsed,
 /// but not do any extra work or allocation actually parsing the underlying
 /// strings or values.
-pub type RecognizedProperty = GenericProperty<(), ()>;
+pub type RecognizedProperty = GenericProperty<(), (), ()>;
 
-pub fn parse_property<'i, K, V, E>(input: &'i str) -> IResult<&'i str, GenericProperty<K, V>, E>
+pub fn parse_property<'i, K, A, V, E>(
+    input: &'i str,
+) -> IResult<&'i str, GenericProperty<K, A, V>, E>
 where
     K: StringBuilder<'i>,
+    A: AnnotationBuilder<'i>,
     V: ValueBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
     E: ContextError<&'i str>,
@@ -41,7 +44,7 @@ where
     parse_identifier
         .context("key")
         .terminated(char('='))
-        .and(parse_value.context("value"))
+        .and(parse_annotated_value.context("value"))
         .map(|(key, value)| GenericProperty { key, value })
         .parse(input)
 }

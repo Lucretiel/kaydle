@@ -4,7 +4,6 @@ use std::{
     convert::TryInto,
     fmt::{self, Formatter},
     iter::FromIterator,
-    num::ParseIntError,
     ops::{Deref, DerefMut, Index, RangeFrom, RangeTo},
 };
 
@@ -429,14 +428,14 @@ fn parse_unicode_escape<'i, E>(input: &'i str) -> IResult<&'i str, char, E>
 where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
 {
     take_while_m_n(1, 6, |c: char| c.is_ascii_hexdigit())
-        .preceded_by(tag("u{"))
+        .map(|s| u32::from_str_radix(s, 16).expect("failed to parse 1-6 hex digits to a u32?"))
+        .map_res(|c: u32| c.try_into())
         .terminated(char('}'))
-        .map_res_cut(|s| u32::from_str_radix(s, 16))
-        .map_res_cut(|c: u32| c.try_into())
+        .cut()
+        .preceded_by(tag("u{"))
         .parse(input)
 }
 
@@ -444,7 +443,6 @@ fn parse_escape<'i, E>(input: &'i str) -> IResult<&'i str, char, E>
 where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
 {
     alt((
@@ -494,7 +492,6 @@ fn parse_chunk<'i, E>(input: &'i str) -> IResult<&'i str, StringChunk<'i>, E>
 where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
 {
     alt((
@@ -513,7 +510,6 @@ where
     T: StringBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
 {
     parse_separated_terminated(
@@ -535,7 +531,52 @@ where
 }
 
 #[cfg(test)]
-mod test_parse_escaped_string {}
+mod test_parse_escaped_string {
+    use super::*;
+    use cool_asserts::assert_matches;
+    use nom::error::Error;
+
+    fn typed_parse_identifier(input: &str) -> IResult<&str, KdlString<'_>, Error<&str>> {
+        parse_escaped_string(input)
+    }
+
+    #[test]
+    fn basic() {
+        assert_matches!(
+            typed_parse_identifier("\"hello\" abc"),
+            Ok((
+                " abc",
+                KdlString {
+                    inner: Cow::Borrowed("hello")
+                }
+            ))
+        )
+    }
+
+    #[test]
+    fn with_escape() {
+        assert_matches!(
+            typed_parse_identifier("\"hello \\t world\" abc"),
+            Ok((
+                " abc",
+                KdlString { inner: Cow::Owned(s) }
+            )) => assert_eq!(s, "hello \t world")
+        );
+    }
+
+    #[test]
+    fn with_escaped_unicode() {
+        assert_matches!(
+            typed_parse_identifier("\"hello\\u{0A}world\" abc"),
+            Ok((
+                " abc",
+                KdlString {
+                    inner: Cow::Owned(s)
+                }
+            )) => assert_eq!(s, "hello\nworld")
+        );
+    }
+}
 
 /// Parse a KDL string, which is either a raw or escaped string
 pub fn parse_string<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
@@ -543,7 +584,6 @@ where
     T: StringBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: ContextError<&'i str>,
 {
@@ -560,7 +600,6 @@ where
     T: StringBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: ContextError<&'i str>,
 {

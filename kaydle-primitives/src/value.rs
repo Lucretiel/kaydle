@@ -1,7 +1,6 @@
 use std::{
     char::CharTryFromError,
     fmt::{self, Formatter},
-    num::ParseIntError,
 };
 
 use nom::{
@@ -13,6 +12,7 @@ use nom_supreme::{tag::TagError, ParserExt};
 use serde::{de, Deserialize, Serialize};
 
 use crate::{
+    annotation::{with_annotation, Annotated, AnnotationBuilder},
     number::{parse_number, BoundsError, KdlNumber, NumberBuilder},
     parse_bool, parse_null,
     string::{parse_string, KdlString, StringBuilder},
@@ -186,7 +186,6 @@ where
     T: ValueBuilder<'i>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, ParseIntError>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
     E: ContextError<&'i str>,
@@ -198,4 +197,17 @@ where
         parse_number.map(T::from_number).context("number"),
     ))
     .parse(input)
+}
+
+pub fn parse_annotated_value<'i, V, A, E>(input: &'i str) -> IResult<&'i str, Annotated<A, V>, E>
+where
+    V: ValueBuilder<'i>,
+    A: AnnotationBuilder<'i>,
+    E: ParseError<&'i str>,
+    E: TagError<&'i str, &'static str>,
+    E: FromExternalError<&'i str, CharTryFromError>,
+    E: FromExternalError<&'i str, BoundsError>,
+    E: ContextError<&'i str>,
+{
+    with_annotation(parse_value).parse(input)
 }
