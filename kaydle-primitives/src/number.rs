@@ -27,7 +27,6 @@ use arrayvec::ArrayString;
 use memchr::memchr3;
 use nom::{
     branch::alt,
-    bytes::complete::take_while1,
     character::complete::{char, digit1, hex_digit1, oct_digit1},
     error::{FromExternalError, ParseError},
     IResult, Parser,
@@ -88,6 +87,7 @@ impl IntBuilder for KdlInt {
         }
     }
 
+    #[inline]
     fn start(sign: Sign) -> Self {
         match sign {
             Sign::Positive => KdlInt::Unsigned(0),
@@ -174,7 +174,7 @@ where
 {
     parse_separated_terminated_res(
         number_parser.recognize(),
-        take_while1(|c| c == '_'),
+        at_least_one(char('_')),
         char('_').not(),
         move || T::start(sign),
         move |value, digits| {
@@ -293,7 +293,6 @@ impl NumberBuilder for KdlNumber {
 
             input
                 .split('_')
-                .filter(|s| !s.is_empty())
                 .try_for_each(|s| buffer.try_push_str(s).ok())
                 .ok_or(BoundsError)?;
 
