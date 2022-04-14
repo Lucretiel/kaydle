@@ -78,7 +78,7 @@ pub struct NodeItem<'i, 'a, A, T> {
     pub name: GenericAnnotated<A, T>,
 
     /// A processor, used for getting the contents of the node.
-    pub node: NodeProcessor<'i, 'a>,
+    pub content: NodeProcessor<'i, 'a>,
 }
 
 type RecognizedNodeItem<'i, 'a> = NodeItem<'i, 'a, (), ()>;
@@ -112,7 +112,7 @@ pub trait NodeListProcessor<'i, 'p>: Sized {
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
-        while let Some(RecognizedNodeItem { node, .. }) = self.next_node()? {
+        while let Some(RecognizedNodeItem { content: node, .. }) = self.next_node()? {
             node.drain()?;
         }
 
@@ -169,7 +169,7 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeDocumentProcessor<'i> {
 
                     NodeItem {
                         name,
-                        node: NodeProcessor {
+                        content: NodeProcessor {
                             state: &mut self.state,
                             in_progress: &mut self.child_in_progress,
                         },
@@ -407,7 +407,7 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
 
                 Ok(Some(NodeItem {
                     name,
-                    node: NodeProcessor {
+                    content: NodeProcessor {
                         state: self.state,
                         in_progress: &mut self.child_in_progress,
                     },
