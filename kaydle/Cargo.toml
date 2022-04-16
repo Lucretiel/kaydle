@@ -13,9 +13,10 @@ repository = "https://github.com/Lucretiel/kaydle"
 
 [dependencies]
 arrayvec = "0.7.1"
-kaydle-primitives = { path = "../kaydle-primitives/", version = "2.0.0" }
+kaydle-primitives = { path = "../kaydle-primitives/", version = "3.0.0" }
 lazy_format = "1.9.0"
 nom = "7.0.0"
 nom-supreme = "0.6.0"
 serde = "1.0.127"
+serde-mobile = "1.0.2"
 thiserror = "1.0.26"
