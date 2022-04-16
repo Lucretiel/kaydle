@@ -82,6 +82,17 @@ pub struct Node<'i, 'a, Name> {
     pub content: NodeContent<'i, 'a>,
 }
 
+/// The outcome of a drain operation, indicating if the thing being drained
+/// was already empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainOutcome {
+    /// The thing was already empty
+    Empty,
+
+    /// There was unconsumed content in the thing
+    NotEmpty,
+}
+
 /// A recognized node. Used in the case where the caller cares *that* a node
 /// was successfully parsed, but not what the actual value of the node is.
 ///
@@ -111,7 +122,7 @@ pub trait NodeList<'i>: Sized {
 
     /// Drain all remaining content from this nodelist. The nodelist is parsed,
     /// and errors are returned, but the nodes are otherwise discarded.
-    fn drain<E>(mut self) -> Result<(), NomErr<E>>
+    fn drain<E>(mut self) -> Result<DrainOutcome, NomErr<E>>
     where
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
@@ -119,15 +130,18 @@ pub trait NodeList<'i>: Sized {
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
+        let mut outcome = DrainOutcome::Empty;
+
         while let Some(RecognizedAnnotation {
             item: RecognizedNode { content, .. },
             ..
         }) = self.next_node()?
         {
+            outcome = DrainOutcome::NotEmpty;
             content.drain()?;
         }
 
-        Ok(())
+        Ok(outcome)
     }
 }
 
@@ -387,7 +401,7 @@ impl<'i, 'p> NodeContent<'i, 'p> {
     }
 
     /// Parse and discard everything in this node
-    pub fn drain<E>(mut self) -> Result<(), NomErr<E>>
+    pub fn drain<E>(mut self) -> Result<DrainOutcome, NomErr<E>>
     where
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
@@ -395,13 +409,19 @@ impl<'i, 'p> NodeContent<'i, 'p> {
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
+        let mut outcome = DrainOutcome::Empty;
+
         loop {
             self = match self.next_event()? {
                 RecognizedNodeEvent::Argument { tail, .. } => tail,
                 RecognizedNodeEvent::Property { tail, .. } => tail,
-                RecognizedNodeEvent::Children { children } => break children.drain(),
-                RecognizedNodeEvent::End => break Ok(()),
-            }
+                RecognizedNodeEvent::Children { children } => {
+                    break children.drain().map(|_| DrainOutcome::NotEmpty)
+                }
+                RecognizedNodeEvent::End => break Ok(outcome),
+            };
+
+            outcome = DrainOutcome::NotEmpty
         }
     }
 
@@ -504,6 +524,6 @@ fn test_full_document_drain() {
 
     let processor = Document::new(content);
 
-    let res: Result<(), nom::Err<()>> = processor.drain();
-    res.expect("parse error");
+    let res: Result<DrainOutcome, nom::Err<()>> = processor.drain();
+    assert_eq!(res.expect("parse error"), DrainOutcome::NotEmpty);
 }
