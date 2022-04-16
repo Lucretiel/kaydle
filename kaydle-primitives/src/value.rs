@@ -25,7 +25,7 @@ use crate::{
 
 /// An arbitrary KDL Value. See also [`AnnotatedValue`][crate::annotation::AnnotatedValue]
 /// for a value that includes an optional annotation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum GenericValue<N, S> {
     /// `null`
     Null,

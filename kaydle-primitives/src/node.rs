@@ -29,7 +29,7 @@ use nom::{
 use nom_supreme::{tag::TagError, ParserExt};
 
 use crate::{
-    annotation::{with_annotation, AnnotationBuilder, GenericAnnotated},
+    annotation::{with_annotation, AnnotationBuilder, GenericAnnotated, RecognizedAnnotation},
     number::BoundsError,
     property::{parse_property, GenericProperty},
     string::{parse_identifier, StringBuilder},
@@ -70,60 +70,87 @@ where
         .preceded_by(parse_linespace)
 }
 
-/// The return value of a successful fetch of the next node. Contains the
-/// annotated name of the node as well as a node processor for fetching
-/// arguments, properties, and children from the node.
-pub struct NodeItem<'i, 'a, A, T> {
-    /// The (possibly annotated) name of this node
-    pub name: GenericAnnotated<A, T>,
+/// A single node. Contains the annotated name of the node as well as a
+/// [`NodeContent`], which is used to extract the arguments, properties, and
+/// children from the node.
+#[derive(Debug)]
+pub struct Node<'i, 'a, Name> {
+    /// The name of this node
+    pub name: Name,
 
     /// A processor, used for getting the contents of the node.
-    pub content: NodeProcessor<'i, 'a>,
+    pub content: NodeContent<'i, 'a>,
 }
 
-type RecognizedNodeItem<'i, 'a> = NodeItem<'i, 'a, (), ()>;
+/// A recognized node. Used in the case where the caller cares *that* a node
+/// was successfully parsed, but not what the actual value of the node is.
+///
+/// Note that nodes are parsed lazily, so this really only recognizes the node
+/// name and annotation.
+pub type RecognizedNode<'i, 'a> = Node<'i, 'a, ()>;
 
-/// Trait for types that can parse a node list. Abstracts over a node document
-/// processor, which operates at the top level, and a node children processor,
-/// which is nested in `{ }`
-pub trait NodeListProcessor<'i, 'p>: Sized {
-    /// Get the next node. Returns the node name and a processor.
+/// Trait for types that contain a node list. Abstracts over a [`Document`],
+/// which operates at the top level, and [`Children`] which are nested in `{ }`.
+pub trait NodeList<'i>: Sized {
+    /// Get the next node. Returns the [`Node`], if any, which includes the
+    /// name of the node as well as its [content][NodeContent].
     ///
     /// Note for implementors: this method should be fused, to ensure that
     /// `drain` is always safe to call. After it returns Ok(None), it should
     /// continue to return Ok(None) forever.
-    fn next_node<'s, T, A, E>(&'s mut self) -> Result<Option<NodeItem<'i, 's, A, T>>, NomErr<E>>
+    fn next_node<'s, Annotation, Name, E>(
+        &'s mut self,
+    ) -> Result<Option<GenericAnnotated<Annotation, Node<'i, 's, Name>>>, NomErr<E>>
     where
-        T: StringBuilder<'i>,
-        A: AnnotationBuilder<'i>,
+        Annotation: AnnotationBuilder<'i>,
+        Name: StringBuilder<'i>,
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
         E: ContextError<&'i str>;
 
     /// Drain all remaining content from this nodelist. The nodelist is parsed,
-    /// and errors are returned, but the content is otherwise discarded.
+    /// and errors are returned, but the nodes are otherwise discarded.
     fn drain<E>(mut self) -> Result<(), NomErr<E>>
     where
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
-
         E: FromExternalError<&'i str, CharTryFromError>,
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
-        while let Some(RecognizedNodeItem { content: node, .. }) = self.next_node()? {
-            node.drain()?;
+        while let Some(RecognizedAnnotation {
+            item: RecognizedNode { content, .. },
+            ..
+        }) = self.next_node()?
+        {
+            content.drain()?;
         }
 
         Ok(())
     }
 }
 
-/// Processor for a top level kdl document. Returns the nodes in the document.
+impl<'i, T: NodeList<'i>> NodeList<'i> for &mut T {
+    fn next_node<'s, Annotation, Name, E>(
+        &'s mut self,
+    ) -> Result<Option<GenericAnnotated<Annotation, Node<'i, 's, Name>>>, NomErr<E>>
+    where
+        Annotation: AnnotationBuilder<'i>,
+        Name: StringBuilder<'i>,
+        E: ParseError<&'i str>,
+        E: TagError<&'i str, &'static str>,
+        E: FromExternalError<&'i str, CharTryFromError>,
+        E: ContextError<&'i str>,
+    {
+        T::next_node(*self)
+    }
+}
+
+/// Container for a top level kdl document. Returns the nodes in the document.
 #[derive(Debug, Clone)]
-pub struct NodeDocumentProcessor<'i> {
-    /// The original input string
+pub struct Document<'i> {
+    /// The currently unparsed input string, as a suffix of the original input.
     state: &'i str,
 
     /// Bool that ensures that node processors fully consume their nodes, so
@@ -132,8 +159,8 @@ pub struct NodeDocumentProcessor<'i> {
     child_in_progress: bool,
 }
 
-impl<'i> NodeDocumentProcessor<'i> {
-    /// Create a new `NodeDocumentProcessor` from an input string.
+impl<'i> Document<'i> {
+    /// Create a new `Document` from an input string.
     pub fn new(input: &'i str) -> Self {
         Self {
             state: input,
@@ -146,11 +173,13 @@ impl<'i> NodeDocumentProcessor<'i> {
     }
 }
 
-impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeDocumentProcessor<'i> {
-    fn next_node<'s, T, A, E>(&'s mut self) -> Result<Option<NodeItem<'i, 's, A, T>>, NomErr<E>>
+impl<'i> NodeList<'i> for Document<'i> {
+    fn next_node<'s, Annotation, Name, E>(
+        &'s mut self,
+    ) -> Result<Option<GenericAnnotated<Annotation, Node<'i, 's, Name>>>, NomErr<E>>
     where
-        T: StringBuilder<'i>,
-        A: AnnotationBuilder<'i>,
+        Annotation: AnnotationBuilder<'i>,
+        Name: StringBuilder<'i>,
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
@@ -163,52 +192,66 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeDocumentProcessor<'i> {
         }
 
         self.run_parser(parse_node_start(eof.value(())))
-            .map(move |node_name| {
-                node_name.map(move |name| {
+            .map(move |opt_name| {
+                opt_name.map(move |annotated_name| {
                     self.child_in_progress = true;
 
-                    NodeItem {
+                    annotated_name.map_item(|name| Node {
                         name,
-                        content: NodeProcessor {
+                        content: NodeContent {
                             state: &mut self.state,
                             in_progress: &mut self.child_in_progress,
                         },
-                    }
+                    })
                 })
             })
     }
 }
 
-enum InternalNodeEvent<VA, V, K, PA, P> {
-    Argument(GenericAnnotated<VA, V>),
-    Property(GenericProperty<K, PA, P>),
+enum InternalNodeEvent<
+    ArgumentAnnotation,
+    Argument,
+    PropertyKey,
+    PropertyValueAnnotation,
+    PropertyValue,
+> {
+    Argument(GenericAnnotated<ArgumentAnnotation, Argument>),
+    Property(GenericProperty<PropertyKey, PropertyValueAnnotation, PropertyValue>),
     Children,
     End,
 }
 
 /// A piece of content from a node.
 #[derive(Debug)]
-pub enum NodeEvent<'i, 'p, VA, V, K, PA, P> {
+pub enum NodeEvent<
+    'i,
+    'p,
+    ArgumentAnnotation,
+    Argument,
+    PropertyKey,
+    PropertyValueAnnotation,
+    PropertyValue,
+> {
     /// An argument from a node
     Argument {
         /// The value, with its annotation
-        argument: GenericAnnotated<VA, V>,
+        argument: GenericAnnotated<ArgumentAnnotation, Argument>,
         /// The processor containing the rest of the node
-        tail: NodeProcessor<'i, 'p>,
+        tail: NodeContent<'i, 'p>,
     },
 
     /// A property (key-value pair) from a node
     Property {
         /// The property
-        property: GenericProperty<K, PA, P>,
+        property: GenericProperty<PropertyKey, PropertyValueAnnotation, PropertyValue>,
         /// The processor containing the rest of the node
-        tail: NodeProcessor<'i, 'p>,
+        tail: NodeContent<'i, 'p>,
     },
 
     /// A set of children from the node.
     Children {
         /// A `NodeListProcessor` used to get child nodes one-by-one
-        children: NodeChildrenProcessor<'i, 'p>,
+        children: Children<'i, 'p>,
     },
 
     /// There was nothing else in the node.
@@ -234,16 +277,6 @@ where
     E: FromExternalError<&'i str, BoundsError>,
     E: ContextError<&'i str>,
 {
-    // There are two major improvements that can be made to this parser, both
-    // related to duplicate work:
-    //
-    // - Don't repeat the `.preceded_by(parse_node_space)` between the
-    //   argument/property case and the children/end case
-    // - Don't repeat the string parse for a value and the string parse for
-    //   a property.
-    //
-    // For now we assume, perhaps aspirationally, that the optimizer notices
-    // and unifies some of the commonalities.
     alt((
         // Parse a value or property, preceded by 1 or more whitespace
         alt((
@@ -274,7 +307,8 @@ where
 /// events from this processor, or else the parent parser will be left in an
 /// inconsistent state.
 #[derive(Debug)]
-pub struct NodeProcessor<'i, 'p> {
+pub struct NodeContent<'i, 'p> {
+    // The state of the original document; owned by a `Document`.
     state: &'p mut &'i str,
 
     /// Bool owned by the parent's list processor. Must be set to false only when
@@ -282,55 +316,74 @@ pub struct NodeProcessor<'i, 'p> {
     in_progress: &'p mut bool,
 }
 
-impl<'i, 'p> NodeProcessor<'i, 'p> {
+impl<'i, 'p> NodeContent<'i, 'p> {
     /// Get the next piece of content from a node. This can be an argument,
     /// a property, a set of children, or [`End`][NodeEvent::End] if the node
     /// is done.
     ///
     /// For correctness, this method is move oriented. If the event is an
-    /// argument or property, the event includes a new [`NodeProcessor`] for
+    /// argument or property, the event includes a new [`NodeContent`] for
     /// fetching the rest of the node. Conversely, if the event is children or
     /// the end of the node, the processor is consumed, because there's nothing
     /// more that can be retrieved from this node.
-    pub fn next_event<VA, V, K, PA, P, E>(
-        self,
-    ) -> Result<NodeEvent<'i, 'p, VA, V, K, PA, P>, NomErr<E>>
+    pub fn next_event<
+        ArgumentAnnotation,
+        Argument,
+        PropertyKey,
+        PropertyValueAnnotation,
+        PropertyValue,
+        Error,
+    >(
+        mut self,
+    ) -> Result<
+        NodeEvent<
+            'i,
+            'p,
+            ArgumentAnnotation,
+            Argument,
+            PropertyKey,
+            PropertyValueAnnotation,
+            PropertyValue,
+        >,
+        NomErr<Error>,
+    >
     where
-        V: ValueBuilder<'i>,
-        VA: AnnotationBuilder<'i>,
-        K: StringBuilder<'i>,
-        P: ValueBuilder<'i>,
-        PA: AnnotationBuilder<'i>,
-        E: ParseError<&'i str>,
-        E: TagError<&'i str, &'static str>,
-        E: FromExternalError<&'i str, CharTryFromError>,
-        E: FromExternalError<&'i str, BoundsError>,
-        E: ContextError<&'i str>,
+        Argument: ValueBuilder<'i>,
+        ArgumentAnnotation: AnnotationBuilder<'i>,
+        PropertyKey: StringBuilder<'i>,
+        PropertyValue: ValueBuilder<'i>,
+        PropertyValueAnnotation: AnnotationBuilder<'i>,
+        Error: ParseError<&'i str>,
+        Error: TagError<&'i str, &'static str>,
+        Error: FromExternalError<&'i str, CharTryFromError>,
+        Error: FromExternalError<&'i str, BoundsError>,
+        Error: ContextError<&'i str>,
     {
         // Because we use a move-oriented interface, there's no need to check
         // in_progress. We (or the children processor we return) just need to
         // make sure it's reset to false when we're done.
-        run_parser_on(self.state, parse_node_event).map(move |event| match event {
-            InternalNodeEvent::Argument(argument) => NodeEvent::Argument {
-                argument,
-                tail: self,
-            },
-            InternalNodeEvent::Property(property) => NodeEvent::Property {
-                property,
-                tail: self,
-            },
-            InternalNodeEvent::Children => NodeEvent::Children {
-                children: NodeChildrenProcessor {
-                    state: self.state,
-                    in_progress: self.in_progress,
-                    child_in_progress: false,
+        self.run_parser(parse_node_event)
+            .map(move |event| match event {
+                InternalNodeEvent::Argument(argument) => NodeEvent::Argument {
+                    argument,
+                    tail: self,
                 },
-            },
-            InternalNodeEvent::End => {
-                *self.in_progress = false;
-                NodeEvent::End
-            }
-        })
+                InternalNodeEvent::Property(property) => NodeEvent::Property {
+                    property,
+                    tail: self,
+                },
+                InternalNodeEvent::Children => NodeEvent::Children {
+                    children: Children {
+                        state: self.state,
+                        in_progress: self.in_progress,
+                        child_in_progress: false,
+                    },
+                },
+                InternalNodeEvent::End => {
+                    *self.in_progress = false;
+                    NodeEvent::End
+                }
+            })
     }
 
     /// Parse and discard everything in this node
@@ -351,12 +404,16 @@ impl<'i, 'p> NodeProcessor<'i, 'p> {
             }
         }
     }
+
+    fn run_parser<T, E>(&mut self, parser: impl Parser<&'i str, T, E>) -> Result<T, NomErr<E>> {
+        run_parser_on(self.state, parser)
+    }
 }
 
 /// Processor for child nodes of a particular node (contained in `{ }`).
 /// Returns the child nodes.
 #[derive(Debug)]
-pub struct NodeChildrenProcessor<'i, 'p> {
+pub struct Children<'i, 'p> {
     state: &'p mut &'i str,
 
     /// Bool owned by the parent's list processor. Must be set to true only when
@@ -370,10 +427,18 @@ pub struct NodeChildrenProcessor<'i, 'p> {
     child_in_progress: bool,
 }
 
-impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
-    fn next_node<'s, T, A, E>(&'s mut self) -> Result<Option<NodeItem<'i, 's, A, T>>, nom::Err<E>>
+impl<'i> Children<'i, '_> {
+    fn run_parser<T, E>(&mut self, parser: impl Parser<&'i str, T, E>) -> Result<T, NomErr<E>> {
+        run_parser_on(self.state, parser)
+    }
+}
+
+impl<'i> NodeList<'i> for Children<'i, '_> {
+    fn next_node<'s, A, N, E>(
+        &'s mut self,
+    ) -> Result<Option<GenericAnnotated<A, Node<'i, 's, N>>>, nom::Err<E>>
     where
-        T: StringBuilder<'i>,
+        N: StringBuilder<'i>,
         A: AnnotationBuilder<'i>,
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
@@ -395,39 +460,25 @@ impl<'i, 'p> NodeListProcessor<'i, 'p> for NodeChildrenProcessor<'i, 'p> {
             )
         }
 
-        match run_parser_on(self.state, parse_node_start(char('}').value(())))? {
-            // None here means that we successfully parsed the end-of-children. Inform the parent.
-            None => {
-                *self.in_progress = false;
-                Ok(None)
-            }
-            Some(name) => {
-                self.child_in_progress = true;
-                eprintln!("Entering child");
+        self.run_parser(parse_node_start(char('}').value(())))
+            .map(|opt_name| match opt_name {
+                // None here means that we successfully parsed the end-of-children. Inform the parent.
+                None => {
+                    *self.in_progress = false;
+                    None
+                }
+                Some(annotated_name) => {
+                    self.child_in_progress = true;
 
-                Ok(Some(NodeItem {
-                    name,
-                    content: NodeProcessor {
-                        state: self.state,
-                        in_progress: &mut self.child_in_progress,
-                    },
-                }))
-            }
-        }
-    }
-}
-
-impl<'i, 'p> NodeListProcessor<'i, 'p> for &mut NodeChildrenProcessor<'i, 'p> {
-    fn next_node<'s, T, A, E>(&'s mut self) -> Result<Option<NodeItem<'i, 's, A, T>>, NomErr<E>>
-    where
-        T: StringBuilder<'i>,
-        A: AnnotationBuilder<'i>,
-        E: ParseError<&'i str>,
-        E: TagError<&'i str, &'static str>,
-        E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>,
-    {
-        NodeChildrenProcessor::next_node(self)
+                    Some(annotated_name.map_item(|name| Node {
+                        name,
+                        content: NodeContent {
+                            state: self.state,
+                            in_progress: &mut self.child_in_progress,
+                        },
+                    }))
+                }
+            })
     }
 }
 
@@ -451,7 +502,7 @@ fn test_full_document_drain() {
     (a)annotated (n)null (f)false (t)true (i)10 (f)10.5 (n)-10.5e7
     "##;
 
-    let processor = NodeDocumentProcessor::new(content);
+    let processor = Document::new(content);
 
     let res: Result<(), nom::Err<()>> = processor.drain();
     res.expect("parse error");

@@ -112,9 +112,19 @@ pub struct GenericAnnotated<A, T> {
     pub item: T,
 }
 
+impl<A, T> GenericAnnotated<A, T> {
+    /// Apply a function to the annotated item [`item`][Self::item]
+    pub fn map_item<U>(self, op: impl FnOnce(T) -> U) -> GenericAnnotated<A, U> {
+        GenericAnnotated {
+            item: op(self.item),
+            annotation: self.annotation,
+        }
+    }
+}
+
 /// A recognized annotated doesn't contain any data; it's used in cases where
 /// the caller wants to parse and discard something with an annotation.
-pub type RecognizedAnnotation = GenericAnnotated<(), ()>;
+pub type RecognizedAnnotated = GenericAnnotated<(), ()>;
 
 /// A normal annotated value uses an `Option<KdlString>` as its annotation
 /// type.
@@ -122,6 +132,11 @@ pub type Annotated<'i, T> = GenericAnnotated<Option<KdlString<'i>>, T>;
 
 /// An annotated [`KdlValue`].
 pub type AnnotatedValue<'i> = Annotated<'i, KdlValue<'i>>;
+
+/// A recognized annotation only contains the annotated item; the annotation
+/// itself is ignored. Used in cases where the caller wants to parse and
+/// discard the annotation before an item.
+pub type RecognizedAnnotation<T> = GenericAnnotated<(), T>;
 
 /// Modify a parser to include an optional preceding annotation, parsing it
 /// and the value itself into a [`GenericAnnotated`].
