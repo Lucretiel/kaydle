@@ -1,7 +1,8 @@
-pub mod anonymous_node;
-pub mod named_node;
-pub mod node_list;
-pub mod string;
+mod anonymous_node;
+mod named_node;
+mod node_list;
+mod string;
+mod value;
 
 use std::fmt::Debug;
 
@@ -14,7 +15,7 @@ pub enum Error {
     Custom(String),
 
     #[error("can't deserialize primitive type from node list")]
-    NodelistFromPrimitive,
+    PrimitiveFromNodelist,
 
     #[error("parse error")]
     ParseError,
@@ -27,6 +28,16 @@ pub enum Error {
         node_name: String,
         type_name: &'static str,
     },
+
+    // TODO this is several different kinds of error
+    #[error("attempted to deserialize a node, but it was incompatible")]
+    IncompatibleNode,
+
+    #[error("can't deserialize a primitive type from a named node")]
+    PrimitiveFromNamedNode,
+
+    #[error("got $kaydle::annotation, but the struct must have exactly two fields")]
+    InvalidAnnotatedValue,
 }
 
 impl From<nom::Err<()>> for Error {

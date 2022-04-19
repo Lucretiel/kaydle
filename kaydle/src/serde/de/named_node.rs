@@ -1,167 +1,83 @@
 use kaydle_primitives::{
     annotation::{Annotated, GenericAnnotated},
-    node::{Node, NodeContent},
+    node::Node,
     string::KdlString,
 };
 use serde::de;
 
-use super::{anonymous_node::AnonymousNodeDeserializer, Error};
+use super::{
+    anonymous_node::Deserializer as AnonymousNodeDeserializer,
+    string::Deserializer as StringDeserializer, Error,
+};
 
 #[derive(Debug)]
-pub struct NamedNodeDeserializer<'i, 'p> {
+pub struct Deserializer<'i, 'p> {
     node: Annotated<'i, Node<'i, 'p, KdlString<'i>>>,
 }
 
-impl<'i, 'p> NamedNodeDeserializer<'i, 'p> {
+impl<'i, 'p> Deserializer<'i, 'p> {
     pub fn new(node: Annotated<'i, Node<'i, 'p, KdlString<'i>>>) -> Self {
         Self { node }
     }
 
-    fn into_parts(self) -> (KdlString<'i>, Annotated<'i, NodeContent<'i, 'p>>) {
+    /// Extract the name from `self.node` and return the rest of it as an
+    /// anonymous deserializer
+    fn into_parts(self) -> (KdlString<'i>, AnonymousNodeDeserializer<'i, 'p>) {
         (
             self.node.item.name,
-            GenericAnnotated {
+            AnonymousNodeDeserializer::new(GenericAnnotated {
                 annotation: self.node.annotation,
                 item: self.node.item.content,
-            },
+            }),
         )
+    }
+
+    /// Treat this named node as an anonymous node if the node name is "-"
+    fn become_anonymous(self) -> Result<AnonymousNodeDeserializer<'i, 'p>, Error> {
+        let (name, node) = self.into_parts();
+        (name == "-")
+            .then(|| node)
+            .ok_or(Error::PrimitiveFromNamedNode)
     }
 }
 
-impl<'de, 'p> de::Deserializer<'de> for NamedNodeDeserializer<'de, 'p> {
+macro_rules! anonymously {
+    ($($deserialize:ident)*) => {
+        $(
+            fn $deserialize<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+                where V: de::Visitor<'de>,
+            {
+                self.become_anonymous()?.$deserialize(visitor)
+            }
+        )*
+    }
+}
+
+impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     type Error = Error;
 
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        Err(Error::IncompatibleNode)
     }
 
-    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
+    anonymously! {
+        deserialize_bool
+        deserialize_i8 deserialize_i16 deserialize_i32 deserialize_i64
+        deserialize_u8 deserialize_u16 deserialize_u32 deserialize_u64
+        deserialize_f32 deserialize_f64 deserialize_char deserialize_str
+        deserialize_string deserialize_bytes deserialize_byte_buf
+        deserialize_option deserialize_unit deserialize_seq deserialize_map
+        deserialize_identifier
     }
 
-    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
-    }
-
-    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
+        self.become_anonymous()?.deserialize_tuple(len, visitor)
     }
 
     fn deserialize_unit_struct<V>(
@@ -175,7 +91,7 @@ impl<'de, 'p> de::Deserializer<'de> for NamedNodeDeserializer<'de, 'p> {
         let (node_name, node) = self.into_parts();
 
         match node_name == name {
-            true => AnonymousNodeDeserializer::new(node).deserialize_unit(visitor),
+            true => node.deserialize_unit(visitor),
             false => Err(Error::TypeNameMismatch {
                 node_name: node_name.into_string(),
                 type_name: name,
@@ -191,21 +107,15 @@ impl<'de, 'p> de::Deserializer<'de> for NamedNodeDeserializer<'de, 'p> {
     where
         V: de::Visitor<'de>,
     {
-        todo!()
-    }
+        let (node_name, node) = self.into_parts();
 
-    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
+        match node_name == name {
+            true => visitor.visit_newtype_struct(node),
+            false => Err(Error::TypeNameMismatch {
+                node_name: node_name.into_string(),
+                type_name: name,
+            }),
+        }
     }
 
     fn deserialize_tuple_struct<V>(
@@ -217,14 +127,15 @@ impl<'de, 'p> de::Deserializer<'de> for NamedNodeDeserializer<'de, 'p> {
     where
         V: de::Visitor<'de>,
     {
-        todo!()
-    }
+        let (node_name, node) = self.into_parts();
 
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
+        match node_name == name {
+            true => node.deserialize_tuple(len, visitor),
+            false => Err(Error::TypeNameMismatch {
+                node_name: node_name.into_string(),
+                type_name: name,
+            }),
+        }
     }
 
     fn deserialize_struct<V>(
@@ -236,32 +147,42 @@ impl<'de, 'p> de::Deserializer<'de> for NamedNodeDeserializer<'de, 'p> {
     where
         V: de::Visitor<'de>,
     {
+        // Need to check for a kdl node name magic
         todo!()
     }
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
+        _name: &'static str,
+        _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
-    }
-
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        todo!()
+        visitor.visit_enum(self)
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        self.node.item.content.drain()?;
+        visitor.visit_unit()
+    }
+}
+
+impl<'de, 'p> de::EnumAccess<'de> for Deserializer<'de, 'p> {
+    type Error = Error;
+    type Variant = AnonymousNodeDeserializer<'de, 'p>;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        let (node_name, deserializer) = self.into_parts();
+
+        seed.deserialize(StringDeserializer::new(node_name))
+            .map(|variant| (variant, deserializer))
     }
 }

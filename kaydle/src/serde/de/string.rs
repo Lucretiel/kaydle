@@ -4,12 +4,12 @@ use kaydle_primitives::string::KdlString;
 use serde::{de, forward_to_deserialize_any};
 
 #[derive(Debug)]
-pub struct KdlStringDeserializer<'i, E> {
+pub struct Deserializer<'i, E> {
     string: KdlString<'i>,
     error: PhantomData<E>,
 }
 
-impl<'i, E> KdlStringDeserializer<'i, E> {
+impl<'i, E> Deserializer<'i, E> {
     pub fn new(string: KdlString<'i>) -> Self {
         Self {
             string,
@@ -18,7 +18,7 @@ impl<'i, E> KdlStringDeserializer<'i, E> {
     }
 }
 
-impl<'de, E: de::Error> de::Deserializer<'de> for KdlStringDeserializer<'de, E> {
+impl<'de, E: de::Error> de::Deserializer<'de> for Deserializer<'de, E> {
     type Error = E;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>

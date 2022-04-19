@@ -138,6 +138,10 @@ pub type AnnotatedValue<'i> = Annotated<'i, KdlValue<'i>>;
 /// discard the annotation before an item.
 pub type RecognizedAnnotation<T> = GenericAnnotated<(), T>;
 
+/// A recognized annotation value is a normal [`KdlValue`] with an ignored
+/// annotation.
+pub type RecognizedAnnotationValue<'i> = RecognizedAnnotation<KdlValue<'i>>;
+
 /// Modify a parser to include an optional preceding annotation, parsing it
 /// and the value itself into a [`GenericAnnotated`].
 pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>

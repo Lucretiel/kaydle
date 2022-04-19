@@ -1,8 +1,8 @@
 use std::{char::CharTryFromError, marker::PhantomData, ptr::NonNull};
 
 use kaydle_primitives::{
-    annotation::{Annotated, GenericAnnotated, RecognizedAnnotation},
-    node::{NodeContent, NodeList, RecognizedNode},
+    annotation::{Annotated, GenericAnnotated},
+    node::{DrainOutcome, NodeContent, NodeList},
     string::StringBuilder,
 };
 use nom::error::{ContextError, FromExternalError, ParseError};
@@ -10,22 +10,23 @@ use nom_supreme::tag::TagError;
 use serde::{de, forward_to_deserialize_any};
 
 use super::{
-    anonymous_node::AnonymousNodeDeserializer, named_node::NamedNodeDeserializer,
-    string::KdlStringDeserializer, Error,
+    anonymous_node::Deserializer as AnonymousNodeDeserializer,
+    named_node::Deserializer as NamedNodeDeserializer, string::Deserializer as StringDeserializer,
+    Error,
 };
 
-pub struct NodeListDeserializer<T> {
+pub struct Deserializer<T> {
     list: T,
 }
 
-impl<'de, T: NodeList<'de>> de::Deserializer<'de> for NodeListDeserializer<T> {
+impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     type Error = Error;
 
     fn deserialize_any<V>(self, _v: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        Err(Error::NodelistFromPrimitive)
+        Err(Error::PrimitiveFromNodelist)
     }
 
     forward_to_deserialize_any! {
@@ -39,16 +40,13 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for NodeListDeserializer<T> {
     {
         // TODO: recursion limit
         // TODO: Nested Errors
-        let value = visitor.visit_seq(NodeListSeqAccess {
+        let value = visitor.visit_seq(SeqAccess {
             list: &mut self.list,
         })?;
 
-        match self.list.next_node()? {
-            None => Ok(value),
-            Some(RecognizedAnnotation {
-                item: RecognizedNode { .. },
-                ..
-            }) => Err(Error::UnusedNode),
+        match self.list.drain()? {
+            DrainOutcome::Empty => Ok(value),
+            DrainOutcome::NotEmpty => Err(Error::UnusedNode),
         }
     }
 
@@ -77,12 +75,9 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for NodeListDeserializer<T> {
     {
         let value = visitor.visit_map(NodeListReborrower::new(&mut self.list))?;
 
-        match self.list.next_node()? {
-            None => Ok(value),
-            Some(RecognizedAnnotation {
-                item: RecognizedNode { .. },
-                ..
-            }) => Err(Error::UnusedNode),
+        match self.list.drain()? {
+            DrainOutcome::Empty => Ok(value),
+            DrainOutcome::NotEmpty => Err(Error::UnusedNode),
         }
     }
 
@@ -107,11 +102,11 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for NodeListDeserializer<T> {
     }
 }
 
-struct NodeListSeqAccess<L> {
-    list: L,
+struct SeqAccess<'a, L> {
+    list: &'a mut L,
 }
 
-impl<'de, L> de::SeqAccess<'de> for NodeListSeqAccess<L>
+impl<'de, L> de::SeqAccess<'de> for SeqAccess<'_, L>
 where
     L: NodeList<'de>,
 {
@@ -210,7 +205,7 @@ where
                 NodeListReborrowError::Borrowed => panic!("called next_key_seed out of order"),
                 NodeListReborrowError::Error(err) => err,
             })?
-            .map(|node_name| seed.deserialize(KdlStringDeserializer::new(node_name)))
+            .map(|node_name| seed.deserialize(StringDeserializer::new(node_name)))
             .transpose()
     }
 

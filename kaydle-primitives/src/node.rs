@@ -122,6 +122,9 @@ pub trait NodeList<'i>: Sized {
 
     /// Drain all remaining content from this nodelist. The nodelist is parsed,
     /// and errors are returned, but the nodes are otherwise discarded.
+    ///
+    /// Returns [`DrainOutcome::NotEmpty`] if there is at least 1 node returned
+    /// by [`next_node`][Self::NextNode].
     fn drain<E>(mut self) -> Result<DrainOutcome, NomErr<E>>
     where
         E: ParseError<&'i str>,
@@ -130,18 +133,25 @@ pub trait NodeList<'i>: Sized {
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
-        let mut outcome = DrainOutcome::Empty;
+        match self.next_node()? {
+            None => Ok(DrainOutcome::Empty),
+            Some(RecognizedAnnotation {
+                item: RecognizedNode { content, .. },
+                ..
+            }) => {
+                content.drain()?;
 
-        while let Some(RecognizedAnnotation {
-            item: RecognizedNode { content, .. },
-            ..
-        }) = self.next_node()?
-        {
-            outcome = DrainOutcome::NotEmpty;
-            content.drain()?;
+                while let Some(RecognizedAnnotation {
+                    item: RecognizedNode { content, .. },
+                    ..
+                }) = self.next_node()?
+                {
+                    content.drain()?;
+                }
+
+                Ok(DrainOutcome::NotEmpty)
+            }
         }
-
-        Ok(outcome)
     }
 }
 
@@ -400,7 +410,10 @@ impl<'i, 'p> NodeContent<'i, 'p> {
             })
     }
 
-    /// Parse and discard everything in this node
+    /// Parse and discard everything in this node. Checks for parse errors, but
+    /// otherwise discards all data. Returns [`DrainOutcome::Empty`] unless
+    /// there are any remaining properties, arguments, or non-empty children
+    /// in this node.
     pub fn drain<E>(mut self) -> Result<DrainOutcome, NomErr<E>>
     where
         E: ParseError<&'i str>,
@@ -409,19 +422,23 @@ impl<'i, 'p> NodeContent<'i, 'p> {
         E: FromExternalError<&'i str, BoundsError>,
         E: ContextError<&'i str>,
     {
-        let mut outcome = DrainOutcome::Empty;
+        self = match self.next_event()? {
+            RecognizedNodeEvent::Argument { tail, .. } => tail,
+            RecognizedNodeEvent::Property { tail, .. } => tail,
+            RecognizedNodeEvent::Children { children } => return children.drain(),
+            RecognizedNodeEvent::End => return Ok(DrainOutcome::Empty),
+        };
 
         loop {
             self = match self.next_event()? {
                 RecognizedNodeEvent::Argument { tail, .. } => tail,
                 RecognizedNodeEvent::Property { tail, .. } => tail,
                 RecognizedNodeEvent::Children { children } => {
-                    break children.drain().map(|_| DrainOutcome::NotEmpty)
+                    children.drain()?;
+                    return Ok(DrainOutcome::NotEmpty);
                 }
-                RecognizedNodeEvent::End => break Ok(outcome),
-            };
-
-            outcome = DrainOutcome::NotEmpty
+                RecognizedNodeEvent::End => return Ok(DrainOutcome::NotEmpty),
+            }
         }
     }
 
