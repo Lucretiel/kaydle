@@ -9,7 +9,7 @@ use std::char::CharTryFromError;
 use nom::{
     character::complete::char,
     error::{FromExternalError, ParseError},
-    Err as NomErr, IResult, Parser,
+    IResult, Parser,
 };
 use nom_supreme::{context::ContextError, tag::TagError, ParserExt};
 
@@ -42,13 +42,9 @@ pub trait AnnotationBuilder<'i> {
     /// String type for the annotation
     type String: StringBuilder<'i>;
 
-    /// There was no annotation
+    /// Build an annotation out of a maybe-parsed annotation string
     #[must_use]
-    fn absent() -> Self;
-
-    /// There was an annotation
-    #[must_use]
-    fn annotated(annotation: Self::String) -> Self;
+    fn build(annotation: Option<Self::String>) -> Self;
 }
 
 /// The unit type can be used as an annotation type in cases where the caller
@@ -56,28 +52,14 @@ pub trait AnnotationBuilder<'i> {
 impl<'i> AnnotationBuilder<'i> for () {
     type String = ();
 
-    #[must_use]
-    #[inline]
-    fn absent() -> Self {}
-
-    #[must_use]
-    #[inline]
-    fn annotated(_annotation: Self::String) -> Self {}
+    fn build(_annotation: Option<Self::String>) -> Self {}
 }
 
 impl<'i, S: StringBuilder<'i>> AnnotationBuilder<'i> for Option<S> {
     type String = S;
 
-    #[must_use]
-    #[inline]
-    fn absent() -> Self {
-        None
-    }
-
-    #[must_use]
-    #[inline]
-    fn annotated(annotation: Self::String) -> Self {
-        Some(annotation)
+    fn build(annotation: Option<Self::String>) -> Self {
+        annotation
     }
 }
 
@@ -124,9 +106,7 @@ pub type RecognizedAnnotationValue<'i> = RecognizedAnnotation<KdlValue<'i>>;
 
 /// Modify a parser to include an optional preceding annotation, parsing it
 /// and the value itself into a [`GenericAnnotated`].
-pub fn with_annotation<'i, P, T, A, E>(
-    mut parser: P,
-) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
+pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
 where
     A: AnnotationBuilder<'i>,
     P: Parser<&'i str, T, E>,
@@ -135,30 +115,13 @@ where
     E: FromExternalError<&'i str, CharTryFromError>,
     E: ContextError<&'i str, &'static str>,
 {
-    // TODO: fix nom-supreme opt-precedes so that we can use it here
-    move |input| match parse_annotation.context("annotation").parse(input) {
-        Ok((input, annotation)) => parser.parse(input).map(|(tail, item)| {
-            (
-                tail,
-                GenericAnnotated {
-                    annotation: A::annotated(annotation),
-                    item,
-                },
-            )
-        }),
-        Err(NomErr::Error(err)) => match parser.parse(input) {
-            Ok((input, item)) => Ok((
-                input,
-                GenericAnnotated {
-                    annotation: A::absent(),
-                    item,
-                },
-            )),
-            Err(NomErr::Error(err2)) => Err(NomErr::Error(ParseError::or(err, err2))),
-            Err(err) => Err(err),
-        },
-        Err(err) => Err(err),
-    }
+    parse_annotation
+        .context("annotation")
+        .opt_precedes(parser)
+        .map(|(annotation, item)| GenericAnnotated {
+            annotation: A::build(annotation),
+            item,
+        })
 }
 
 #[cfg(test)]

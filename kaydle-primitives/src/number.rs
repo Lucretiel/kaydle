@@ -199,11 +199,11 @@ where
     let (input, base) = parse_base(input)?;
 
     match base {
-        Base::Binary => {
-            parse_integer_part(at_least_one(char('0').or(char('1'))), 2, sign).parse(input)
-        }
-        Base::Octal => parse_integer_part(oct_digit1, 8, sign).parse(input),
-        Base::Hex => parse_integer_part(hex_digit1, 16, sign).parse(input),
+        Base::Binary => parse_integer_part(at_least_one(alt((char('0'), char('1')))), 2, sign)
+            .cut()
+            .parse(input),
+        Base::Octal => parse_integer_part(oct_digit1, 8, sign).cut().parse(input),
+        Base::Hex => parse_integer_part(hex_digit1, 16, sign).cut().parse(input),
     }
 }
 
@@ -224,16 +224,21 @@ where
 {
     parse_optional_sign
         .terminated(recognize_decimal_component)
-        .terminated(char('.').terminated(recognize_decimal_component).opt())
         .terminated(
-            char('e')
-                .or(char('E'))
-                .terminated(parse_optional_sign)
+            recognize_decimal_component
+                .cut()
+                .preceded_by(char('.'))
+                .opt(),
+        )
+        .terminated(
+            parse_optional_sign
                 .terminated(recognize_decimal_component)
+                .cut()
+                .preceded_by(alt((char('e'), char('E'))))
                 .opt(),
         )
         .recognize()
-        .map_res(T::from_str)
+        .map_res_cut(T::from_str)
         .parse(input)
 }
 

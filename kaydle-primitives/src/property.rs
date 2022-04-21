@@ -57,7 +57,7 @@ where
     parse_identifier
         .context("key")
         .terminated(char('='))
-        .and(parse_value.context("value"))
+        .and(parse_value.context("value").cut())
         .map(|(key, value)| GenericProperty { key, value })
         .parse(input)
 }
