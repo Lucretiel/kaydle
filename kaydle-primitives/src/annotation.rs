@@ -7,13 +7,11 @@ dynamic languages.
 use std::char::CharTryFromError;
 
 use nom::{
-    branch::alt,
     character::complete::char,
-    combinator::success,
-    error::{ContextError, FromExternalError, ParseError},
-    IResult, Parser,
+    error::{FromExternalError, ParseError},
+    Err as NomErr, IResult, Parser,
 };
-use nom_supreme::{tag::TagError, ParserExt};
+use nom_supreme::{context::ContextError, tag::TagError, ParserExt};
 
 use crate::{
     string::{parse_identifier, KdlString, StringBuilder},
@@ -26,7 +24,7 @@ where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
     T: StringBuilder<'i>,
 {
     parse_identifier
@@ -83,24 +81,6 @@ impl<'i, S: StringBuilder<'i>> AnnotationBuilder<'i> for Option<S> {
     }
 }
 
-/// Try to parse an annotation, but succeed if there is none present. Uses
-/// [`AnnotationBuilder`] as a return type. Returns an error if the opening
-/// parenthesis exists but an error occurred inside.
-pub fn parse_maybe_annotation<'i, T, E>(input: &'i str) -> IResult<&'i str, T, E>
-where
-    E: ParseError<&'i str>,
-    E: TagError<&'i str, &'static str>,
-    E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
-    T: AnnotationBuilder<'i>,
-{
-    alt((
-        parse_annotation.map(T::annotated),
-        success(()).map(|()| T::absent()),
-    ))
-    .parse(input)
-}
-
 /// An annotated object of some kind. Contains some `item` as well as an
 /// associated annotation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -144,19 +124,41 @@ pub type RecognizedAnnotationValue<'i> = RecognizedAnnotation<KdlValue<'i>>;
 
 /// Modify a parser to include an optional preceding annotation, parsing it
 /// and the value itself into a [`GenericAnnotated`].
-pub fn with_annotation<'i, P, T, A, E>(parser: P) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
+pub fn with_annotation<'i, P, T, A, E>(
+    mut parser: P,
+) -> impl Parser<&'i str, GenericAnnotated<A, T>, E>
 where
     A: AnnotationBuilder<'i>,
     P: Parser<&'i str, T, E>,
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
-    parse_maybe_annotation
-        .context("annotation")
-        .and(parser)
-        .map(|(annotation, item)| GenericAnnotated { annotation, item })
+    // TODO: fix nom-supreme opt-precedes so that we can use it here
+    move |input| match parse_annotation.context("annotation").parse(input) {
+        Ok((input, annotation)) => parser.parse(input).map(|(tail, item)| {
+            (
+                tail,
+                GenericAnnotated {
+                    annotation: A::annotated(annotation),
+                    item,
+                },
+            )
+        }),
+        Err(NomErr::Error(err)) => match parser.parse(input) {
+            Ok((input, item)) => Ok((
+                input,
+                GenericAnnotated {
+                    annotation: A::absent(),
+                    item,
+                },
+            )),
+            Err(NomErr::Error(err2)) => Err(NomErr::Error(ParseError::or(err, err2))),
+            Err(err) => Err(err),
+        },
+        Err(err) => Err(err),
+    }
 }
 
 #[cfg(test)]

@@ -18,10 +18,11 @@ use nom::{
     bytes::complete::take_while_m_n,
     character::complete::char,
     combinator::success,
-    error::{make_error, ContextError, ErrorKind, FromExternalError, ParseError},
+    error::{make_error, ErrorKind, FromExternalError, ParseError},
     Err as NomErr, IResult, Parser,
 };
 use nom_supreme::{
+    context::ContextError,
     multi::parse_separated_terminated,
     tag::{complete::tag, TagError},
     ParserExt,
@@ -300,7 +301,7 @@ where
     loop {
         match memchr(b'"', shifter.tail().as_bytes()) {
             // Couldn't find any quotes; need more input
-            None => return Err(NomErr::Error(make_error("", ErrorKind::Eof))),
+            None => return Err(NomErr::Failure(make_error("", ErrorKind::Eof))),
 
             // Found a quote; search the successor bytes for hashes
             Some(quote_idx) => {
@@ -311,7 +312,7 @@ where
                 match shifter.tail().as_bytes().get(0..hash_count) {
                     // Bounds error here means the input isn't large enough to
                     // contain the hash bytes; this is an unexpected EoF
-                    None => return Err(NomErr::Error(make_error("", ErrorKind::Eof))),
+                    None => return Err(NomErr::Failure(make_error("", ErrorKind::Eof))),
 
                     // Found our chunk; if it's all hashes, this is the end of
                     // the string
@@ -529,6 +530,7 @@ where
         },
     )
     .or(char('"').map(|_| T::empty()))
+    .cut()
     .preceded_by(char('"'))
     .parse(input)
 }
@@ -588,7 +590,7 @@ where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     alt((
         parse_escaped_string.context("escaped string"),
@@ -604,7 +606,7 @@ where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     alt((
         parse_bare_identifier

@@ -1,11 +1,13 @@
+use std::mem;
+
 use kaydle_primitives::{
-    annotation::{Annotated, AnnotatedValue, RecognizedAnnotationValue},
+    annotation::{Annotated, AnnotatedValue, RecognizedAnnotated, RecognizedAnnotationValue},
     node::{DrainOutcome, NodeContent, NodeEvent, NodeList},
-    property::RecognizedProperty,
+    property::{Property, RecognizedProperty},
 };
 use serde::{de, Deserializer as _};
 
-use super::{value::Deserializer as ValueDeserializer, Error};
+use super::{node_list, util, value::Deserializer as ValueDeserializer, Error};
 
 #[derive(Debug)]
 pub struct Deserializer<'i, 'p> {
@@ -188,33 +190,64 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     fn deserialize_unit_struct<V>(
         self,
         _name: &'static str,
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        Err(Error::IncompatibleNode)
+        self.deserialize_primitive_value(visitor)
     }
 
     fn deserialize_newtype_struct<V>(
         self,
         _name: &'static str,
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        Err(Error::IncompatibleNode)
+        visitor.visit_newtype_struct(self)
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        match self.node.item.next_event()? {
+            NodeEvent::Argument { argument, tail } => {
+                let mut access = ArgumentSeqAccess::Initial(tail, argument);
+                let value = visitor.visit_seq(&mut access)?;
+
+                let node = match access {
+                    ArgumentSeqAccess::Initial(node, ..) | ArgumentSeqAccess::Content(node) => node,
+                    ArgumentSeqAccess::Done => return Ok(value),
+                };
+
+                match node.drain()? {
+                    DrainOutcome::Empty => Ok(value),
+                    DrainOutcome::NotEmpty => Err(Error::UnfinishedNode),
+                }
+            }
+            NodeEvent::Property {
+                property: RecognizedProperty { .. },
+                tail,
+            } => {
+                tail.drain()?;
+                Err(Error::IncompatibleNode)
+            }
+            NodeEvent::Children { mut children } => {
+                let value = visitor.visit_seq(node_list::SeqAccess::new(&mut children))?;
+
+                match children.drain()? {
+                    DrainOutcome::Empty => Ok(value),
+                    DrainOutcome::NotEmpty => Err(Error::UnusedNode),
+                }
+            }
+            NodeEvent::End => visitor.visit_seq(util::EmptyAccess::new()),
+        }
     }
 
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
@@ -223,21 +256,32 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
 
     fn deserialize_tuple_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         len: usize,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        self.deserialize_tuple(len, visitor)
     }
 
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        match self.node.item.next_event()? {
+            NodeEvent::Argument {
+                argument: RecognizedAnnotated { .. },
+                tail,
+            } => {
+                tail.drain()?;
+                Err(Error::UnfinishedNode)
+            }
+            NodeEvent::Property { property, tail } => todo!(),
+            NodeEvent::Children { children } => todo!(),
+            NodeEvent::End => todo!(),
+        }
     }
 
     fn deserialize_struct<V>(
@@ -313,21 +357,22 @@ impl<'de> de::VariantAccess<'de> for Deserializer<'de, '_> {
     }
 }
 
-struct ArgumentSeqAccess<'i, 'p> {
-    first: Option<AnnotatedValue<'i>>,
-    node: NodeContent<'i, 'p>,
+enum PeekedAccess<'i, 'p, T> {
+    Initial(NodeContent<'i, 'p>, T),
+    Content(NodeContent<'i, 'p>),
+    Done,
 }
 
-impl<'de> serde_mobile::SeqAccess<'de> for ArgumentSeqAccess<'de, '_> {
+impl<'de> de::SeqAccess<'de> for PeekedAccess<'de, '_, AnnotatedValue<'de>> {
     type Error = Error;
 
-    fn next_element_seed<S>(self, seed: S) -> Result<Option<(S::Value, Self)>, Self::Error>
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
-        let (value, tail) = match self.first {
-            Some(value) => (value, self.node),
-            None => match self.node.next_event()? {
+        let (value, tail) = match mem::replace(self, Self::Done) {
+            Self::Initial(tail, value) => (value, tail),
+            Self::Content(content) => match content.next_event()? {
                 NodeEvent::Argument { argument, tail } => (argument, tail),
                 NodeEvent::Property {
                     property: RecognizedProperty { .. },
@@ -344,18 +389,13 @@ impl<'de> serde_mobile::SeqAccess<'de> for ArgumentSeqAccess<'de, '_> {
                 }
                 NodeEvent::End => return Ok(None),
             },
+            Self::Done => return Ok(None),
         };
 
-        seed.deserialize(ValueDeserializer::new(value))
-            .map(|value| {
-                (
-                    value,
-                    ArgumentSeqAccess {
-                        first: None,
-                        node: tail,
-                    },
-                )
-            })
-            .map(Some)
+        *self = Self::Content(tail);
+
+        seed.deserialize(ValueDeserializer::new(value)).map(Some)
     }
 }
+
+impl<'de> de::MapAccess<'de> for PeekedAccess<'de, '_, Property<'de>> {}

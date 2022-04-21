@@ -23,10 +23,10 @@ use nom::{
     branch::alt,
     character::complete::char,
     combinator::eof,
-    error::{ContextError, FromExternalError, ParseError},
+    error::{FromExternalError, ParseError},
     Err as NomErr, IResult, Parser,
 };
-use nom_supreme::{tag::TagError, ParserExt};
+use nom_supreme::{context::ContextError, tag::TagError, ParserExt};
 
 use crate::{
     annotation::{with_annotation, AnnotationBuilder, GenericAnnotated, RecognizedAnnotation},
@@ -61,7 +61,7 @@ where
     E: ParseError<&'i str>,
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     with_annotation(parse_identifier)
         .map(Some)
@@ -118,7 +118,7 @@ pub trait NodeList<'i>: Sized {
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>;
+        E: ContextError<&'i str, &'static str>;
 
     /// Drain all remaining content from this nodelist. The nodelist is parsed,
     /// and errors are returned, but the nodes are otherwise discarded.
@@ -131,7 +131,7 @@ pub trait NodeList<'i>: Sized {
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
         E: FromExternalError<&'i str, BoundsError>,
-        E: ContextError<&'i str>,
+        E: ContextError<&'i str, &'static str>,
     {
         match self.next_node()? {
             None => Ok(DrainOutcome::Empty),
@@ -165,7 +165,7 @@ impl<'i, T: NodeList<'i>> NodeList<'i> for &mut T {
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>,
+        E: ContextError<&'i str, &'static str>,
     {
         T::next_node(*self)
     }
@@ -207,7 +207,7 @@ impl<'i> NodeList<'i> for Document<'i> {
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>,
+        E: ContextError<&'i str, &'static str>,
     {
         if self.child_in_progress {
             panic!(
@@ -299,7 +299,7 @@ where
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     alt((
         // Parse a value or property, preceded by 1 or more whitespace
@@ -381,7 +381,7 @@ impl<'i, 'p> NodeContent<'i, 'p> {
         Error: TagError<&'i str, &'static str>,
         Error: FromExternalError<&'i str, CharTryFromError>,
         Error: FromExternalError<&'i str, BoundsError>,
-        Error: ContextError<&'i str>,
+        Error: ContextError<&'i str, &'static str>,
     {
         // Because we use a move-oriented interface, there's no need to check
         // in_progress. We (or the children processor we return) just need to
@@ -420,7 +420,7 @@ impl<'i, 'p> NodeContent<'i, 'p> {
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
         E: FromExternalError<&'i str, BoundsError>,
-        E: ContextError<&'i str>,
+        E: ContextError<&'i str, &'static str>,
     {
         self = match self.next_event()? {
             RecognizedNodeEvent::Argument { tail, .. } => tail,
@@ -481,7 +481,7 @@ impl<'i> NodeList<'i> for Children<'i, '_> {
         E: TagError<&'i str, &'static str>,
 
         E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>,
+        E: ContextError<&'i str, &'static str>,
     {
         // If the *parent* is at a node boundary, it means that *this*
         // set of children was previously completed.

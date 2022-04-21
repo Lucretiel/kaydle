@@ -2,6 +2,7 @@ mod anonymous_node;
 mod named_node;
 mod node_list;
 mod string;
+mod util;
 mod value;
 
 use std::fmt::Debug;
@@ -38,6 +39,12 @@ pub enum Error {
 
     #[error("got $kaydle::annotation, but the struct must have exactly two fields")]
     InvalidAnnotatedValue,
+
+    #[error("tried to deserialize an enum from an annotated value. It must be a newtype enum.")]
+    InvalidEnum,
+
+    #[error("sequence or map deserializer didn't consume the whole node")]
+    UnfinishedNode,
 }
 
 impl From<nom::Err<()>> for Error {

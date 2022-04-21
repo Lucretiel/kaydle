@@ -8,10 +8,10 @@ use std::char::CharTryFromError;
 
 use nom::{
     character::complete::char,
-    error::{ContextError, FromExternalError, ParseError},
+    error::{FromExternalError, ParseError},
     IResult, Parser,
 };
-use nom_supreme::{tag::TagError, ParserExt};
+use nom_supreme::{context::ContextError, tag::TagError, ParserExt};
 
 use crate::{
     annotation::{AnnotationBuilder, GenericAnnotated},
@@ -52,7 +52,7 @@ where
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     parse_identifier
         .context("key")

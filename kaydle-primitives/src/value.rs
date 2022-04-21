@@ -10,10 +10,10 @@ use std::{
 
 use nom::{
     branch::alt,
-    error::{ContextError, FromExternalError, ParseError},
+    error::{FromExternalError, ParseError},
     IResult, Parser,
 };
-use nom_supreme::{tag::TagError, ParserExt};
+use nom_supreme::{context::ContextError, tag::TagError, ParserExt};
 use serde::{de, Deserialize, Serialize};
 
 use crate::{
@@ -224,7 +224,7 @@ where
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     alt((
         parse_null.map(|()| T::from_null()).context("null"),
@@ -244,7 +244,7 @@ where
     E: TagError<&'i str, &'static str>,
     E: FromExternalError<&'i str, CharTryFromError>,
     E: FromExternalError<&'i str, BoundsError>,
-    E: ContextError<&'i str>,
+    E: ContextError<&'i str, &'static str>,
 {
     with_annotation(parse_bare_value).parse(input)
 }

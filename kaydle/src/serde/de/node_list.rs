@@ -5,8 +5,8 @@ use kaydle_primitives::{
     node::{DrainOutcome, NodeContent, NodeList},
     string::StringBuilder,
 };
-use nom::error::{ContextError, FromExternalError, ParseError};
-use nom_supreme::tag::TagError;
+use nom::error::{FromExternalError, ParseError};
+use nom_supreme::{context::ContextError, tag::TagError};
 use serde::{de, forward_to_deserialize_any};
 
 use super::{
@@ -40,9 +40,7 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     {
         // TODO: recursion limit
         // TODO: Nested Errors
-        let value = visitor.visit_seq(SeqAccess {
-            list: &mut self.list,
-        })?;
+        let value = visitor.visit_seq(SeqAccess::new(&mut self.list))?;
 
         match self.list.drain()? {
             DrainOutcome::Empty => Ok(value),
@@ -102,8 +100,14 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     }
 }
 
-struct SeqAccess<'a, L> {
+pub struct SeqAccess<'a, L> {
     list: &'a mut L,
+}
+
+impl<'a, L> SeqAccess<'a, L> {
+    pub fn new(list: &'a mut L) -> Self {
+        Self { list }
+    }
 }
 
 impl<'de, L> de::SeqAccess<'de> for SeqAccess<'_, L>
@@ -159,7 +163,8 @@ impl<'a, 'i, T: NodeList<'i>> NodeListReborrower<'i, 'a, T> {
         E: ParseError<&'i str>,
         E: TagError<&'i str, &'static str>,
         E: FromExternalError<&'i str, CharTryFromError>,
-        E: ContextError<&'i str>,
+
+        E: ContextError<&'i str, &'static str>,
     {
         if self.node.is_some() {
             return Err(NodeListReborrowError::Borrowed);

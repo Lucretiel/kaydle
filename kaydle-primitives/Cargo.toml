@@ -15,7 +15,7 @@ repository = "https://github.com/Lucretiel/kaydle"
 arrayvec = "0.7.1"
 memchr = "2.4.1"
 nom = "7.0.0"
-nom-supreme = "0.6.0"
+nom-supreme = "0.8.0"
 serde = "1.0.129"
 
 [dev-dependencies]
