@@ -165,7 +165,6 @@ pub trait ValueBuilder<'a> {
     type String: StringBuilder<'a>;
 
     /// Build a KDL value from `null`.
-
     fn from_null() -> Self;
 
     /// Build a KDL value from `true` or `false`.
