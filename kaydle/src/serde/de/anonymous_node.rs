@@ -1,9 +1,10 @@
-use std::mem;
+use std::{collections::VecDeque, mem};
 
 use kaydle_primitives::{
     annotation::{Annotated, AnnotatedValue, RecognizedAnnotated, RecognizedAnnotationValue},
     node::{DrainOutcome, NodeContent, NodeEvent, NodeList},
     property::{Property, RecognizedProperty},
+    value::KdlValue,
 };
 use serde::{de, Deserializer as _};
 
@@ -12,39 +13,69 @@ use super::{node_list, util, value::Deserializer as ValueDeserializer, Error};
 #[derive(Debug)]
 pub struct Deserializer<'i, 'p> {
     node: Annotated<'i, NodeContent<'i, 'p>>,
+
+    // TODO: usually we don't need these, they're just for specific cases. Find
+    // a generic-oriented way to abstract them out.
+    //
+    // In the meantime, we really need to find a way to clean up the noisiness
+    // of having concrete buffers here (where you have to attempt to pop, then
+    // fall back to the node, and handle draining by checking the presence of
+    // data in the buffers.)
+    buffered_arguments: VecDeque<AnnotatedValue<'i>>,
+    buffered_properties: VecDeque<Property<'i>>,
 }
 
 impl<'i, 'p> Deserializer<'i, 'p> {
     pub fn new(node: Annotated<'i, NodeContent<'i, 'p>>) -> Self {
-        Self { node }
+        Self {
+            node,
+            buffered_arguments: VecDeque::new(),
+            buffered_properties: VecDeque::new(),
+        }
     }
 
     /// Deserialize a single primitive value, like a number, string, unit,
-    /// etc. Doesn't apply to named data.
+    /// etc. Doesn't apply to named data. Absence of any value is handled as
+    /// a unit. Generally, in order to work correctly,
     fn deserialize_primitive_value<V>(self, visitor: V) -> Result<V::Value, Error>
     where
         V: de::Visitor<'i>,
     {
-        match self.node.item.next_event()? {
-            NodeEvent::Argument {
-                argument: RecognizedAnnotationValue { item: value, .. },
-                tail,
-            } => match tail.drain()? {
-                DrainOutcome::Empty => value.visit_to(visitor),
+        // First, ensure there's no properties
+        if !self.buffered_properties.is_empty() {
+            self.node.item.drain()?;
+            return Err(Error::IncompatibleNode);
+        }
+
+        match self.buffered_arguments.pop_front() {
+            Some(arg) => match self.node.item.drain()? {
                 DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                DrainOutcome::Empty => match self.buffered_arguments.is_empty() {
+                    false => Err(Error::IncompatibleNode),
+                    true => arg.item.visit_to(visitor),
+                },
             },
-            NodeEvent::Property {
-                property: RecognizedProperty { .. },
-                tail,
-            } => {
-                tail.drain()?;
-                Err(Error::IncompatibleNode)
-            }
-            NodeEvent::Children { children } => match children.drain()? {
-                DrainOutcome::Empty => visitor.visit_unit(),
-                DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+            None => match self.node.item.next_event()? {
+                NodeEvent::Argument {
+                    argument: RecognizedAnnotationValue { item: value, .. },
+                    tail,
+                } => match tail.drain()? {
+                    DrainOutcome::Empty => value.visit_to(visitor),
+                    DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                },
+                NodeEvent::Property {
+                    property: RecognizedProperty { .. },
+                    tail,
+                } => {
+                    tail.drain()?;
+                    Err(Error::IncompatibleNode)
+                }
+                NodeEvent::Children { children } => match children.drain()? {
+                    DrainOutcome::Empty => visitor.visit_unit(),
+                    DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                },
+                NodeEvent::End => visitor.visit_unit(),
             },
-            NodeEvent::End => visitor.visit_unit(),
         }
     }
 }
@@ -195,7 +226,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        self.deserialize_primitive_value(visitor)
+        self.deserialize_unit(visitor)
     }
 
     fn deserialize_newtype_struct<V>(
@@ -213,38 +244,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        match self.node.item.next_event()? {
-            NodeEvent::Argument { argument, tail } => {
-                let mut access = ArgumentSeqAccess::Initial(tail, argument);
-                let value = visitor.visit_seq(&mut access)?;
-
-                let node = match access {
-                    ArgumentSeqAccess::Initial(node, ..) | ArgumentSeqAccess::Content(node) => node,
-                    ArgumentSeqAccess::Done => return Ok(value),
-                };
-
-                match node.drain()? {
-                    DrainOutcome::Empty => Ok(value),
-                    DrainOutcome::NotEmpty => Err(Error::UnfinishedNode),
-                }
-            }
-            NodeEvent::Property {
-                property: RecognizedProperty { .. },
-                tail,
-            } => {
-                tail.drain()?;
-                Err(Error::IncompatibleNode)
-            }
-            NodeEvent::Children { mut children } => {
-                let value = visitor.visit_seq(node_list::SeqAccess::new(&mut children))?;
-
-                match children.drain()? {
-                    DrainOutcome::Empty => Ok(value),
-                    DrainOutcome::NotEmpty => Err(Error::UnusedNode),
-                }
-            }
-            NodeEvent::End => visitor.visit_seq(util::EmptyAccess::new()),
-        }
+        todo!()
     }
 
     fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -270,18 +270,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        match self.node.item.next_event()? {
-            NodeEvent::Argument {
-                argument: RecognizedAnnotated { .. },
-                tail,
-            } => {
-                tail.drain()?;
-                Err(Error::UnfinishedNode)
-            }
-            NodeEvent::Property { property, tail } => todo!(),
-            NodeEvent::Children { children } => todo!(),
-            NodeEvent::End => todo!(),
-        }
+        todo!()
     }
 
     fn deserialize_struct<V>(
@@ -324,6 +313,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     }
 }
 
+// VariantAccess for an anonymous node deseri
 impl<'de> de::VariantAccess<'de> for Deserializer<'de, '_> {
     type Error = Error;
 
@@ -356,46 +346,3 @@ impl<'de> de::VariantAccess<'de> for Deserializer<'de, '_> {
         self.deserialize_struct("-", fields, visitor)
     }
 }
-
-enum PeekedAccess<'i, 'p, T> {
-    Initial(NodeContent<'i, 'p>, T),
-    Content(NodeContent<'i, 'p>),
-    Done,
-}
-
-impl<'de> de::SeqAccess<'de> for PeekedAccess<'de, '_, AnnotatedValue<'de>> {
-    type Error = Error;
-
-    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
-    where
-        T: de::DeserializeSeed<'de>,
-    {
-        let (value, tail) = match mem::replace(self, Self::Done) {
-            Self::Initial(tail, value) => (value, tail),
-            Self::Content(content) => match content.next_event()? {
-                NodeEvent::Argument { argument, tail } => (argument, tail),
-                NodeEvent::Property {
-                    property: RecognizedProperty { .. },
-                    tail,
-                } => {
-                    tail.drain()?;
-                    return Err(Error::IncompatibleNode);
-                }
-                NodeEvent::Children { children } => {
-                    return match children.drain()? {
-                        DrainOutcome::Empty => Ok(None),
-                        DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
-                    }
-                }
-                NodeEvent::End => return Ok(None),
-            },
-            Self::Done => return Ok(None),
-        };
-
-        *self = Self::Content(tail);
-
-        seed.deserialize(ValueDeserializer::new(value)).map(Some)
-    }
-}
-
-impl<'de> de::MapAccess<'de> for PeekedAccess<'de, '_, Property<'de>> {}

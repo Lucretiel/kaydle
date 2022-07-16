@@ -84,10 +84,6 @@ impl<A, T> GenericAnnotated<A, T> {
     }
 }
 
-/// A recognized annotated doesn't contain any data; it's used in cases where
-/// the caller wants to parse and discard something with an annotation.
-pub type RecognizedAnnotated = GenericAnnotated<(), ()>;
-
 /// A normal annotated value uses an `Option<KdlString>` as its annotation
 /// type.
 pub type Annotated<'i, T> = GenericAnnotated<Option<KdlString<'i>>, T>;
@@ -99,6 +95,10 @@ pub type AnnotatedValue<'i> = Annotated<'i, KdlValue<'i>>;
 /// itself is ignored. Used in cases where the caller wants to parse and
 /// discard the annotation before an item.
 pub type RecognizedAnnotation<T> = GenericAnnotated<(), T>;
+
+/// A recognized annotated doesn't contain any data; it's used in cases where
+/// the caller wants to parse and discard something with an annotation.
+pub type RecognizedAnnotated = RecognizedAnnotation<()>;
 
 /// A recognized annotation value is a normal [`KdlValue`] with an ignored
 /// annotation.

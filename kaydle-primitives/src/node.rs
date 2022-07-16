@@ -70,9 +70,9 @@ where
         .preceded_by(parse_linespace)
 }
 
-/// A single node. Contains the annotated name of the node as well as a
-/// [`NodeContent`], which is used to extract the arguments, properties, and
-/// children from the node.
+/// A single node. Contains the name of the node as well as a [`NodeContent`],
+/// which is used to extract the arguments, properties, and children from
+/// the node.
 #[derive(Debug)]
 pub struct Node<'i, 'a, Name> {
     /// The name of this node

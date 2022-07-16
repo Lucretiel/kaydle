@@ -4,13 +4,19 @@ use kaydle_primitives::{
     value::KdlValue,
 };
 use serde::{
-    de::{self, IntoDeserializer},
+    de::{self, value::BorrowedStrDeserializer},
     forward_to_deserialize_any,
 };
 
-use super::{string::Deserializer as StringDeserializer, Error};
+// TODO: I don't like the use of a single type to handle both raw values and
+// annotated values; refactor.
+// TODO: Annotations as enum discriminants
 
-#[derive(Debug)]
+use super::{super::magics, string::Deserializer as StringDeserializer, Error};
+
+/// Deserializer for a KDL value with an optional annotation. Deserializes into
+/// primitive types, but also can deserialize an annotation.
+#[derive(Debug, Clone)]
 pub struct Deserializer<'i, A> {
     value: GenericAnnotated<A, KdlValue<'i>>,
 }
@@ -48,7 +54,7 @@ where
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
         bytes byte_buf unit unit_struct seq tuple tuple_struct map
-        identifier newtype_struct enum
+        identifier enum newtype_struct
     }
 
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -101,11 +107,11 @@ impl<'de> HandleAnnotationMagic<'de> for AnnotatedValue<'de> {
         V: de::Visitor<'de>,
     {
         match *fields {
-            ["$kaydle::annotation", field_name] | [field_name, "$kaydle::annotation"] => visitor
+            [magics::ANNOTATION, field_name] | [field_name, magics::ANNOTATION] => visitor
                 .visit_map(serde_mobile::AccessAdapter::new(AnnotatedKeyAccess::new(
                     field_name, self,
                 ))),
-            _ if fields.contains(&"$kaydle::annotation") => Err(Error::InvalidAnnotatedValue),
+            _ if fields.contains(&magics::ANNOTATION) => Err(Error::InvalidAnnotatedValue),
             _ => self.item.visit_to(visitor),
         }
     }
@@ -161,6 +167,26 @@ impl<'i> AnnotatedKeyAccess<'i> {
             },
         }
     }
+
+    fn extract_key_value(self) -> (&'static str, AnnotatedValueAccess<'i>) {
+        match self {
+            AnnotatedKeyAccess::Annotation {
+                annotation,
+                value,
+                field_name,
+            } => (
+                magics::ANNOTATION,
+                AnnotatedValueAccess::Annotation {
+                    annotation,
+                    value,
+                    field_name,
+                },
+            ),
+            AnnotatedKeyAccess::Field { value, field_name } => {
+                (field_name, AnnotatedValueAccess::Field { value })
+            }
+        }
+    }
 }
 
 impl<'de> serde_mobile::MapKeyAccess<'de> for AnnotatedKeyAccess<'de> {
@@ -171,28 +197,9 @@ impl<'de> serde_mobile::MapKeyAccess<'de> for AnnotatedKeyAccess<'de> {
     where
         S: de::DeserializeSeed<'de>,
     {
-        match self {
-            AnnotatedKeyAccess::Annotation {
-                annotation,
-                value,
-                field_name,
-            } => seed
-                .deserialize("$kaydle::annotation".into_deserializer())
-                .map(|key| {
-                    Some((
-                        key,
-                        AnnotatedValueAccess::Annotation {
-                            annotation,
-                            value,
-                            field_name,
-                        },
-                    ))
-                }),
-
-            AnnotatedKeyAccess::Field { value, field_name } => seed
-                .deserialize(field_name.into_deserializer())
-                .map(|field_name| Some((field_name, AnnotatedValueAccess::Field { value }))),
-        }
+        let (key, value) = self.extract_key_value();
+        seed.deserialize(BorrowedStrDeserializer::new(key))
+            .map(|key| Some((key, value)))
     }
 }
 

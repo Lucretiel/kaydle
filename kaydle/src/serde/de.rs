@@ -4,6 +4,7 @@ mod node_list;
 mod string;
 mod util;
 mod value;
+pub mod buffers;
 
 use std::fmt::Debug;
 

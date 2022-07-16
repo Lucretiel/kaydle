@@ -17,6 +17,6 @@ kaydle-primitives = { path = "../kaydle-primitives/", version = "3.0.0" }
 lazy_format = "1.9.0"
 nom = "7.0.0"
 nom-supreme = "0.8.0"
-serde = "1.0.127"
+serde = { version = "1.0.137", features = ["derive"] }
 serde-mobile = "3.0.0"
 thiserror = "1.0.26"

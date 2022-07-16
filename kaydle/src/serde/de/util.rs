@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use serde::de;
-/// SeqAccess and MapAccess type
+/// SeqAccess and MapAccess type that's always empty
 pub struct EmptyAccess<E> {
     error: PhantomData<E>,
 }

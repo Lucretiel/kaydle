@@ -15,6 +15,7 @@ use super::{
     Error,
 };
 
+// Deserializer for a NodeList. Used for both documents and children.
 pub struct Deserializer<T> {
     list: T,
 }

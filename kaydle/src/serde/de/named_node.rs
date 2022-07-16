@@ -109,6 +109,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     {
         let (node_name, node) = self.into_parts();
 
+        // TODO: completion check here; need to ensure that node has
+        // been drained.
         match node_name == name {
             true => visitor.visit_newtype_struct(node),
             false => Err(Error::TypeNameMismatch {
@@ -147,8 +149,18 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        // Need to check for a kdl node name magic
-        todo!()
+        let (node_name, node) = self.into_parts();
+
+        // TODO: various magics, and in particular a node name magic
+        // TODO: add a deserialize_records method to Anonymous deserializer,
+        // comparable to tuple vs tuple struct
+        match node_name == name {
+            true => node.deserialize_struct(name, fields, visitor),
+            false => Err(Error::TypeNameMismatch {
+                node_name: node_name.into_string(),
+                type_name: name,
+            }),
+        }
     }
 
     fn deserialize_enum<V>(
@@ -160,6 +172,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
+        // TODO: check that self is drained afterwards. Probably want a
+        // different type here.
         visitor.visit_enum(self)
     }
 
