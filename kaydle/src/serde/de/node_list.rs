@@ -2,7 +2,7 @@ use std::{char::CharTryFromError, marker::PhantomData, ptr::NonNull};
 
 use kaydle_primitives::{
     annotation::{Annotated, GenericAnnotated},
-    node::{DrainOutcome, NodeContent, NodeList},
+    node::{Document, DrainOutcome, NodeContent, NodeList},
     string::StringBuilder,
 };
 use nom::error::{FromExternalError, ParseError};
@@ -18,6 +18,12 @@ use super::{
 // Deserializer for a NodeList. Used for both documents and children.
 pub struct Deserializer<T> {
     list: T,
+}
+
+impl<'de> Deserializer<Document<'de>> {
+    pub fn new(document: Document<'de>) -> Self {
+        Self { list: document }
+    }
 }
 
 impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
@@ -72,7 +78,7 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     where
         V: de::Visitor<'de>,
     {
-        let value = visitor.visit_map(NodeListReborrower::new(&mut self.list))?;
+        let value = visitor.visit_map(MapAccess::new(&mut self.list))?;
 
         match self.list.drain()? {
             DrainOutcome::Empty => Ok(value),
@@ -129,7 +135,7 @@ where
 }
 
 // Please for the love of god someone tell me there's a different way to do this
-struct NodeListReborrower<'i, 'a, T: NodeList<'i> + 'a> {
+pub struct MapAccess<'i, 'a, T: NodeList<'i> + 'a> {
     fake_list: PhantomData<&'a mut T>,
     list: NonNull<T>,
     node: Option<Annotated<'i, NodeContent<'i, 'a>>>,
@@ -149,8 +155,8 @@ enum NodeListUseNodeError {
     NoNode,
 }
 
-impl<'a, 'i, T: NodeList<'i>> NodeListReborrower<'i, 'a, T> {
-    fn new(list: &'a mut T) -> Self {
+impl<'a, 'i, T: NodeList<'i>> MapAccess<'i, 'a, T> {
+    pub fn new(list: &'a mut T) -> Self {
         Self {
             fake_list: PhantomData,
             list: NonNull::from(list),
@@ -196,7 +202,7 @@ impl<'a, 'i, T: NodeList<'i>> NodeListReborrower<'i, 'a, T> {
     }
 }
 
-impl<'de, T> de::MapAccess<'de> for NodeListReborrower<'de, '_, T>
+impl<'de, T> de::MapAccess<'de> for MapAccess<'de, '_, T>
 where
     T: NodeList<'de>,
 {

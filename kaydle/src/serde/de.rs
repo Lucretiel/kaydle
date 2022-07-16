@@ -4,10 +4,10 @@ mod node_list;
 mod string;
 mod util;
 mod value;
-pub mod buffers;
 
 use std::fmt::Debug;
 
+use kaydle_primitives::node::Document;
 use serde::de;
 use thiserror::Error;
 
@@ -61,4 +61,10 @@ impl de::Error for Error {
     {
         Self::Custom(msg.to_string())
     }
+}
+
+pub fn from_str<'a, T: de::Deserialize<'a>>(input: &'a str) -> Result<T, Error> {
+    let document = Document::new(input);
+    let deserializer = node_list::Deserializer::new(document);
+    T::deserialize(deserializer)
 }

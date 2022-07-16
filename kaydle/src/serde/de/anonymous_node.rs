@@ -4,34 +4,25 @@ use kaydle_primitives::{
     annotation::{Annotated, AnnotatedValue, RecognizedAnnotated, RecognizedAnnotationValue},
     node::{DrainOutcome, NodeContent, NodeEvent, NodeList},
     property::{Property, RecognizedProperty},
+    string::KdlString,
     value::KdlValue,
 };
 use serde::{de, Deserializer as _};
+use serde_mobile::SubordinateValue;
 
-use super::{node_list, util, value::Deserializer as ValueDeserializer, Error};
+use super::{
+    node_list, string::Deserializer as StringDeserializer, util,
+    value::Deserializer as ValueDeserializer, Error,
+};
 
 #[derive(Debug)]
 pub struct Deserializer<'i, 'p> {
     node: Annotated<'i, NodeContent<'i, 'p>>,
-
-    // TODO: usually we don't need these, they're just for specific cases. Find
-    // a generic-oriented way to abstract them out.
-    //
-    // In the meantime, we really need to find a way to clean up the noisiness
-    // of having concrete buffers here (where you have to attempt to pop, then
-    // fall back to the node, and handle draining by checking the presence of
-    // data in the buffers.)
-    buffered_arguments: VecDeque<AnnotatedValue<'i>>,
-    buffered_properties: VecDeque<Property<'i>>,
 }
 
 impl<'i, 'p> Deserializer<'i, 'p> {
     pub fn new(node: Annotated<'i, NodeContent<'i, 'p>>) -> Self {
-        Self {
-            node,
-            buffered_arguments: VecDeque::new(),
-            buffered_properties: VecDeque::new(),
-        }
+        Self { node }
     }
 
     /// Deserialize a single primitive value, like a number, string, unit,
@@ -41,41 +32,26 @@ impl<'i, 'p> Deserializer<'i, 'p> {
     where
         V: de::Visitor<'i>,
     {
-        // First, ensure there's no properties
-        if !self.buffered_properties.is_empty() {
-            self.node.item.drain()?;
-            return Err(Error::IncompatibleNode);
-        }
-
-        match self.buffered_arguments.pop_front() {
-            Some(arg) => match self.node.item.drain()? {
+        match self.node.item.next_event()? {
+            NodeEvent::Argument {
+                argument: RecognizedAnnotationValue { item: value, .. },
+                tail,
+            } => match tail.drain()? {
+                DrainOutcome::Empty => value.visit_to(visitor),
                 DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
-                DrainOutcome::Empty => match self.buffered_arguments.is_empty() {
-                    false => Err(Error::IncompatibleNode),
-                    true => arg.item.visit_to(visitor),
-                },
             },
-            None => match self.node.item.next_event()? {
-                NodeEvent::Argument {
-                    argument: RecognizedAnnotationValue { item: value, .. },
-                    tail,
-                } => match tail.drain()? {
-                    DrainOutcome::Empty => value.visit_to(visitor),
-                    DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
-                },
-                NodeEvent::Property {
-                    property: RecognizedProperty { .. },
-                    tail,
-                } => {
-                    tail.drain()?;
-                    Err(Error::IncompatibleNode)
-                }
-                NodeEvent::Children { children } => match children.drain()? {
-                    DrainOutcome::Empty => visitor.visit_unit(),
-                    DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
-                },
-                NodeEvent::End => visitor.visit_unit(),
+            NodeEvent::Property {
+                property: RecognizedProperty { .. },
+                tail,
+            } => {
+                tail.drain()?;
+                Err(Error::IncompatibleNode)
+            }
+            NodeEvent::Children { children } => match children.drain()? {
+                DrainOutcome::Empty => visitor.visit_unit(),
+                DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
             },
+            NodeEvent::End => visitor.visit_unit(),
         }
     }
 }
@@ -237,14 +213,53 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        visitor.visit_newtype_struct(self)
+        todo!("consider handling newtype structs as single-element tuples")
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        // Basic logic: a sequence is either of arguments or children.
+        match self.node.item.next_event()? {
+            NodeEvent::Argument { argument, tail } => {
+                let mut access = ArgumentsSeqAccess {
+                    peeked: Some(argument),
+                    node: Some(tail),
+                };
+
+                let value = visitor.visit_seq(&mut access)?;
+
+                match access.peeked {
+                    Some(..) => Err(Error::UnfinishedNode),
+                    None => match access.node {
+                        None => Ok(value),
+                        Some(node) => match node.drain()? {
+                            DrainOutcome::Empty => Ok(value),
+
+                            // TODO: Need to inspect here to distinguish
+                            // Unfinished from Incompatible
+                            DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                        },
+                    },
+                }
+            }
+            NodeEvent::Property {
+                property: RecognizedProperty { .. },
+                tail,
+            } => {
+                tail.drain()?;
+                Err(Error::IncompatibleNode)
+            }
+            NodeEvent::Children { mut children } => {
+                let value = visitor.visit_seq(node_list::SeqAccess::new(&mut children))?;
+                match children.drain()? {
+                    DrainOutcome::Empty => Ok(value),
+                    DrainOutcome::NotEmpty => Err(Error::UnfinishedNode),
+                }
+            }
+            NodeEvent::End => visitor.visit_seq(util::EmptyAccess::new()),
+        }
     }
 
     fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -270,19 +285,66 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        match self.node.item.next_event()? {
+            NodeEvent::Argument {
+                argument: RecognizedAnnotated { .. },
+                tail,
+            } => {
+                tail.drain()?;
+                Err(Error::IncompatibleNode)
+            }
+            NodeEvent::Property { property, tail } => {
+                use serde_mobile::AccessAdapter;
+
+                let mut access = AccessAdapter::new(PropertiesMapAccess {
+                    node: tail,
+                    peeked: Some(property),
+                });
+
+                let value = visitor.visit_map(&mut access)?;
+
+                // If empty is false, the node was definitely not fully
+                // consumed. It still needs to be drained, but even if the
+                // drain is empty it's already too late.
+                let (empty, tail) = match access {
+                    AccessAdapter::Done => return Ok(value),
+                    AccessAdapter::Ready(PropertiesMapAccess { peeked, node }) => {
+                        (peeked.is_none(), node)
+                    }
+                    AccessAdapter::Value(SubordinateValue {
+                        parent: PropertiesMapAccess { node, .. },
+                        ..
+                    }) => (true, node),
+                };
+
+                match tail.drain()? {
+                    DrainOutcome::Empty if empty => Ok(value),
+                    _ => Err(Error::UnfinishedNode),
+                }
+            }
+            NodeEvent::Children { mut children } => {
+                let value = visitor.visit_map(node_list::MapAccess::new(&mut children))?;
+                match children.drain()? {
+                    DrainOutcome::Empty => Ok(value),
+                    DrainOutcome::NotEmpty => Err(Error::UnfinishedNode),
+                }
+            }
+            NodeEvent::End => visitor.visit_map(util::EmptyAccess::new()),
+        }
     }
 
     fn deserialize_struct<V>(
         self,
-        name: &'static str,
-        fields: &'static [&'static str],
+        _name: &'static str,
+        _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        // TODO: interpret fields as various kaydle magics. For now we just
+        // treat this as a map.
+        self.deserialize_map(visitor)
     }
 
     fn deserialize_enum<V>(
@@ -294,7 +356,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
     where
         V: de::Visitor<'de>,
     {
-        todo!()
+        todo!("enums aren't implemented yet")
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -344,5 +406,101 @@ impl<'de> de::VariantAccess<'de> for Deserializer<'de, '_> {
         V: de::Visitor<'de>,
     {
         self.deserialize_struct("-", fields, visitor)
+    }
+}
+
+/// Type providing sequence access to the arguments of a node
+// TODO: replace a struct containing options
+// TODO: opt-in property / children caching.
+struct ArgumentsSeqAccess<'i, 'a> {
+    peeked: Option<AnnotatedValue<'i>>,
+    node: Option<NodeContent<'i, 'a>>,
+}
+
+impl<'de, 'a> de::SeqAccess<'de> for ArgumentsSeqAccess<'de, 'a> {
+    type Error = Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        match self.peeked.take() {
+            Some(argument) => seed.deserialize(ValueDeserializer::new(argument)).map(Some),
+            None => match self.node.take() {
+                None => Ok(None),
+                Some(node) => match node.next_event()? {
+                    NodeEvent::Argument { argument, tail } => {
+                        self.node = Some(tail);
+                        seed.deserialize(ValueDeserializer::new(argument)).map(Some)
+                    }
+                    NodeEvent::Property {
+                        property: RecognizedProperty { .. },
+                        tail,
+                    } => {
+                        self.node = Some(tail);
+
+                        // This is where the buffering needs to happen
+                        Err(Error::IncompatibleNode)
+                    }
+                    NodeEvent::Children { children } => match children.drain()? {
+                        DrainOutcome::Empty => Ok(None),
+                        DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                    },
+                    NodeEvent::End => Ok(None),
+                },
+            },
+        }
+    }
+}
+
+struct PropertiesMapAccess<'i, 'a> {
+    peeked: Option<Property<'i>>,
+    node: NodeContent<'i, 'a>,
+}
+
+impl<'de, 'a> serde_mobile::MapKeyAccess<'de> for PropertiesMapAccess<'de, 'a> {
+    type Error = Error;
+    type Value =
+        serde_mobile::SubordinateValue<ValueDeserializer<'de, Option<KdlString<'de>>>, Self>;
+
+    fn next_key_seed<S>(self, seed: S) -> Result<Option<(S::Value, Self::Value)>, Self::Error>
+    where
+        S: de::DeserializeSeed<'de>,
+    {
+        let (property, tail) = match self.peeked {
+            Some(property) => (property, self.node),
+            None => match self.node.next_event()? {
+                NodeEvent::Argument {
+                    argument: RecognizedAnnotated { .. },
+                    tail,
+                } => {
+                    // Need to buffer the argument here, then loop
+                    tail.drain()?;
+                    return Err(Error::IncompatibleNode);
+                }
+                NodeEvent::Property { property, tail } => (property, tail),
+                NodeEvent::Children { children } => {
+                    return match children.drain()? {
+                        DrainOutcome::Empty => Ok(None),
+                        DrainOutcome::NotEmpty => Err(Error::IncompatibleNode),
+                    }
+                }
+                NodeEvent::End => return Ok(None),
+            },
+        };
+
+        seed.deserialize(StringDeserializer::new(property.key))
+            .map(|deserialized| {
+                Some((
+                    deserialized,
+                    serde_mobile::SubordinateValue {
+                        parent: PropertiesMapAccess {
+                            peeked: None,
+                            node: tail,
+                        },
+                        value: ValueDeserializer::new(property.value),
+                    },
+                ))
+            })
     }
 }

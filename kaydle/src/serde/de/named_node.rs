@@ -154,6 +154,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
         // TODO: various magics, and in particular a node name magic
         // TODO: add a deserialize_records method to Anonymous deserializer,
         // comparable to tuple vs tuple struct
+        // TODO: Find an efficient way to strip `kaydle::name` from the fields
+        // slice.
         match node_name == name {
             true => node.deserialize_struct(name, fields, visitor),
             false => Err(Error::TypeNameMismatch {
