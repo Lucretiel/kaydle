@@ -1,11 +1,8 @@
-use std::{collections::VecDeque, mem};
-
 use kaydle_primitives::{
     annotation::{Annotated, AnnotatedValue, RecognizedAnnotated, RecognizedAnnotationValue},
     node::{DrainOutcome, NodeContent, NodeEvent, NodeList},
     property::{Property, RecognizedProperty},
     string::KdlString,
-    value::KdlValue,
 };
 use serde::{de, Deserializer as _};
 use serde_mobile::SubordinateValue;
@@ -178,13 +175,17 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
         self.deserialize_primitive_value(visitor)
     }
 
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_option<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
         // Need to visit Some or None. Need to also preserve annotation.
         // Probably need to do something sensible with children.
-        todo!()
+        // General design thoughts: We can probably treat a node as either an
+        // aggregate or a primitive (that is to say, we shouldn't worry about
+        // the Option<Vec<i32>> case). This means that if we field a request
+        // for an Option, we should probably treat it as an optional primitive
+        todo!("Deserializing nodes into options is not implemented yet")
     }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -207,13 +208,18 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        _name: &'static str,
-        visitor: V,
+        name: &'static str,
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!("consider handling newtype structs as single-element tuples")
+        // TODO: consider handling newtype structs as single element tuples?
+        todo!(
+            "Deserializing nodes into newtype structs isn't implemented yet \
+            (did you mean to include #[serde(transparent)] on type {:?}?",
+            name
+        )
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -335,28 +341,38 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de, '_> {
 
     fn deserialize_struct<V>(
         self,
-        _name: &'static str,
-        _fields: &'static [&'static str],
+        name: &'static str,
+        fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        // TODO: interpret fields as various kaydle magics. For now we just
-        // treat this as a map.
+        if let Some(field) = fields.iter().find(|field| field.starts_with("$kaydle::")) {
+            todo!(
+                "kaydle magics aren't implemented yet; \
+                found {:?} on on type {:?})",
+                field,
+                name
+            );
+        }
         self.deserialize_map(visitor)
     }
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
-        visitor: V,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        todo!("enums aren't implemented yet")
+        todo!(
+            "Deserializing anonymous nodes into enums isn't implemented yet \
+            (did you mean to add #[serde(transparent)] to an enclosing \
+            newtype struct?)"
+        )
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>

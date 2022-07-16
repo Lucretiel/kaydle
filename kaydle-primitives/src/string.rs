@@ -196,6 +196,53 @@ impl<'de> Deserialize<'de> for KdlString<'de> {
 
         deserializer.deserialize_string(KdlStringVisitor)
     }
+
+    fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct KdlStringVisitor<'de, 'a>(&'a mut KdlString<'de>);
+
+        impl<'de> de::Visitor<'de> for KdlStringVisitor<'de, '_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                write!(formatter, "a KDL string")
+            }
+
+            fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlString::from_borrowed(value);
+                Ok(())
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match self.0.inner {
+                    Cow::Owned(ref mut s) => {
+                        s.clear();
+                        s.push_str(value);
+                        Ok(())
+                    }
+                    Cow::Borrowed(_) => self.visit_string(value.to_owned()),
+                }
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlString::from_string(value);
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_string(KdlStringVisitor(place))
+    }
 }
 
 /// Helper trait for parsing strings with escape sequences. Allows for returning

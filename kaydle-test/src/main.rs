@@ -21,12 +21,20 @@ enum Enum {
 }
 
 #[derive(Deserialize, Debug)]
+struct AnnotatedString {
+    #[serde(rename = "$kaydle::annotation")]
+    annotation: Option<String>,
+    value: String,
+}
+
+#[derive(Deserialize, Debug)]
 struct Document {
     name: String,
     age: i32,
     key_value: HashMap<String, i32>,
     items: Vec<Item>,
     enums: Vec<Enum>,
+    annotated_values: Vec<AnnotatedString>,
 }
 
 fn main() -> anyhow::Result<()> {

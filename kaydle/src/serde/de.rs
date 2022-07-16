@@ -1,3 +1,4 @@
+mod annotation;
 mod anonymous_node;
 mod named_node;
 mod node_list;

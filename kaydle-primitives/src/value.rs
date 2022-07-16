@@ -4,6 +4,7 @@ be `null`, `true`, `false`, a number, or a string.
 */
 
 use std::{
+    borrow::Cow,
     char::CharTryFromError,
     fmt::{self, Formatter},
 };
@@ -151,6 +152,96 @@ impl<'de> Deserialize<'de> for KdlValue<'de> {
         }
 
         deserializer.deserialize_any(ValueVisitor)
+    }
+
+    fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ValueVisitor<'de, 'a>(&'a mut KdlValue<'de>);
+
+        impl<'de> de::Visitor<'de> for ValueVisitor<'de, '_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(formatter, "a KDL value")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::Null;
+                Ok(())
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::Bool(v);
+                Ok(())
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::Number(KdlNumber::Signed(v));
+                Ok(())
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::Number(KdlNumber::Unsigned(v));
+                Ok(())
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::Number(KdlNumber::Float(v));
+                Ok(())
+            }
+
+            fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::String(KdlString::from_borrowed(v));
+                Ok(())
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match self.0 {
+                    KdlValue::String(s) => match **s {
+                        Cow::Owned(ref mut s) => {
+                            s.clear();
+                            s.push_str(v);
+                            Ok(())
+                        }
+                        _ => self.visit_string(v.to_owned()),
+                    },
+                    _ => self.visit_string(v.to_owned()),
+                }
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                *self.0 = KdlValue::String(KdlString::from_string(v));
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(ValueVisitor(place))
     }
 }
 

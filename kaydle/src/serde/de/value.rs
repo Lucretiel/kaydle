@@ -12,7 +12,7 @@ use serde::{
 // annotated values; refactor.
 // TODO: Annotations as enum discriminants
 
-use super::{super::magics, string::Deserializer as StringDeserializer, Error};
+use super::{super::magics, annotation::Deserializer as AnnotationDeserializer, Error};
 
 /// Deserializer for a KDL value with an optional annotation. Deserializes into
 /// primitive types, but also can deserialize an annotation.
@@ -132,8 +132,7 @@ impl<'de> HandleAnnotationMagic<'de> for RecognizedAnnotationValue<'de> {
 
 enum AnnotatedKeyAccess<'i> {
     Annotation {
-        annotation: KdlString<'i>,
-        value: KdlValue<'i>,
+        value: AnnotatedValue<'i>,
         field_name: &'static str,
     },
     Field {
@@ -144,8 +143,7 @@ enum AnnotatedKeyAccess<'i> {
 
 enum AnnotatedValueAccess<'i> {
     Annotation {
-        annotation: KdlString<'i>,
-        value: KdlValue<'i>,
+        value: AnnotatedValue<'i>,
         field_name: &'static str,
     },
     Field {
@@ -155,32 +153,14 @@ enum AnnotatedValueAccess<'i> {
 
 impl<'i> AnnotatedKeyAccess<'i> {
     pub fn new(field_name: &'static str, value: AnnotatedValue<'i>) -> Self {
-        match value.annotation {
-            Some(annotation) => Self::Annotation {
-                annotation,
-                value: value.item,
-                field_name,
-            },
-            None => Self::Field {
-                value: value.item,
-                field_name,
-            },
-        }
+        Self::Annotation { value, field_name }
     }
 
     fn extract_key_value(self) -> (&'static str, AnnotatedValueAccess<'i>) {
         match self {
-            AnnotatedKeyAccess::Annotation {
-                annotation,
-                value,
-                field_name,
-            } => (
+            AnnotatedKeyAccess::Annotation { value, field_name } => (
                 magics::ANNOTATION,
-                AnnotatedValueAccess::Annotation {
-                    annotation,
-                    value,
-                    field_name,
-                },
+                AnnotatedValueAccess::Annotation { value, field_name },
             ),
             AnnotatedKeyAccess::Field { value, field_name } => {
                 (field_name, AnnotatedValueAccess::Field { value })
@@ -212,16 +192,15 @@ impl<'de> serde_mobile::MapValueAccess<'de> for AnnotatedValueAccess<'de> {
         S: de::DeserializeSeed<'de>,
     {
         match self {
-            AnnotatedValueAccess::Annotation {
-                annotation,
-                value,
-                field_name,
-            } => seed
-                .deserialize(StringDeserializer::new(annotation))
+            AnnotatedValueAccess::Annotation { value, field_name } => seed
+                .deserialize(AnnotationDeserializer::new(value.annotation))
                 .map(|annotation| {
                     (
                         annotation,
-                        Some(AnnotatedKeyAccess::Field { value, field_name }),
+                        Some(AnnotatedKeyAccess::Field {
+                            value: value.item,
+                            field_name,
+                        }),
                     )
                 }),
 
