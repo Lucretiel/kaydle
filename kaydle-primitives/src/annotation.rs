@@ -37,7 +37,7 @@ where
 /// Trait for annotations. An annotation is essentially an optional string;
 /// this trait allows for abstracting over cases where the caller doesn't care
 /// about the annotation, or only cares about the *presence* of an annotation.
-/// Used as the return type for [`parse_maybe_annotation`].
+/// Used as the return type for [`with_annotation`].
 pub trait AnnotationBuilder<'i> {
     /// String type for the annotation
     type String: StringBuilder<'i>;

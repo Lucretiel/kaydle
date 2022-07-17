@@ -21,6 +21,7 @@ enum Enum {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct AnnotatedString {
     #[serde(rename = "$kaydle::annotation")]
     annotation: Option<String>,
@@ -28,6 +29,7 @@ struct AnnotatedString {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct Document {
     name: String,
     age: i32,

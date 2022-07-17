@@ -415,7 +415,7 @@ mod test_parse_raw {
     fn unfinished() {
         assert_matches!(
             typed_parse_raw(r####"r###"abc"####),
-            Err(NomErr::Error(Error { input: "", .. }))
+            Err(NomErr::Failure(Error { input: "", .. }))
         )
     }
 
@@ -423,9 +423,51 @@ mod test_parse_raw {
     fn partially_finished() {
         assert_matches!(
             typed_parse_raw(r####"r###"abc"#"####),
-            Err(NomErr::Error(Error { input: "", .. }))
+            Err(NomErr::Failure(Error { input: "", .. }))
         )
     }
+
+    #[test]
+    fn not_regular_string() {
+        assert_matches!(
+            typed_parse_raw(r##""abc""##),
+            Err(NomErr::Error(Error {
+                input: r##""abc""##,
+                ..
+            }))
+        )
+    }
+
+    #[test]
+    fn not_identifier() {
+        assert_matches!(
+            typed_parse_raw("abc"),
+            Err(NomErr::Error(Error { input: "abc", .. }))
+        )
+    }
+
+    #[test]
+    fn not_r_identifier() {
+        assert_matches!(
+            typed_parse_raw("raw"),
+            Err(NomErr::Error(Error { input: "aw", .. }))
+        )
+    }
+}
+
+/// Returns true if this is not considered a "non-identifier character"
+#[inline]
+pub fn is_identifier(c: char) -> bool {
+    let code_point: u32 = c.into();
+    (b"\\/(){}<>;[]=,\"".iter().all(|&b| code_point != b.into()))
+        && (code_point > 0x20)
+        && (code_point <= 0x10FFFF)
+}
+
+/// Returns true if this is not considered a "non-initial character"
+#[inline]
+pub fn is_initial_identifier(c: char) -> bool {
+    is_identifier(c) && !c.is_ascii_digit()
 }
 
 /// Parse a KDL bare identifier.
@@ -437,9 +479,14 @@ mod test_parse_raw {
 pub fn parse_bare_identifier<'i, E: ParseError<&'i str>>(
     input: &'i str,
 ) -> IResult<&'i str, &'i str, E> {
-    match input.chars().next() {
-        Some(c) if c.is_alphabetic() => {
-            let split_point = input[1..].find(|c: char| !c.is_alphanumeric()).unwrap_or(0) + 1;
+    let mut chars = input.chars();
+    match chars.next() {
+        Some(c) if is_initial_identifier(c) => {
+            let split_point = chars
+                .as_str()
+                .find(|c: char| !is_identifier(c))
+                .unwrap_or(0)
+                + c.len_utf8();
             let (ident, tail) = input.split_at(split_point);
             Ok((tail, ident))
         }
@@ -475,6 +522,19 @@ mod test_parse_identifier {
                 code: ErrorKind::Alpha
             }))
         )
+    }
+
+    #[test]
+    fn with_punctuation() {
+        assert_eq!(
+            typed_parse_identifier("abc-def_ghi 123"),
+            Ok((" 123", "abc-def_ghi"))
+        )
+    }
+
+    #[test]
+    fn is_dash() {
+        assert_eq!(typed_parse_identifier("- 10"), Ok((" 10", "-")))
     }
 }
 

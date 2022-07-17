@@ -124,7 +124,7 @@ pub trait NodeList<'i>: Sized {
     /// and errors are returned, but the nodes are otherwise discarded.
     ///
     /// Returns [`DrainOutcome::NotEmpty`] if there is at least 1 node returned
-    /// by [`next_node`][Self::NextNode].
+    /// by [`next_node`][Self::next_node].
     fn drain<E>(mut self) -> Result<DrainOutcome, NomErr<E>>
     where
         E: ParseError<&'i str>,

@@ -1,6 +1,6 @@
 [package]
 name = "kaydle"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Nathan West <Lucretiel@gmail.com>"]
 edition = "2021"
 
@@ -12,11 +12,13 @@ repository = "https://github.com/Lucretiel/kaydle"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-arrayvec = "0.7.1"
 kaydle-primitives = { path = "../kaydle-primitives/", version = "3.0.0" }
 lazy_format = "1.9.0"
-nom = "7.0.0"
+nom = "7.1.1"
 nom-supreme = "0.8.0"
-serde = { version = "1.0.137", features = ["derive"] }
+serde = "1.0.139" 
 serde-mobile = "3.0.0"
 thiserror = "1.0.26"
+
+[dev-dependencies]
+serde = { version = "1.0.139", features = ["derive"] }
