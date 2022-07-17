@@ -15,12 +15,14 @@ use super::{
     Error,
 };
 
-// Deserializer for a NodeList. Used for both documents and children.
+/// Deserializer for a NodeList. Used for both documents and children.
 pub struct Deserializer<T> {
     list: T,
 }
 
 impl<'de> Deserializer<Document<'de>> {
+    /// Create a new Deserializer that will Deserialize from a KDL document
+    /// contained in a string.
     pub fn new(document: Document<'de>) -> Self {
         Self { list: document }
     }
@@ -45,7 +47,7 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     where
         V: de::Visitor<'de>,
     {
-        // TODO: recursion limit
+        // TODO: recursion limit. This will be handled by an adapter type
         // TODO: Nested Errors
         let value = visitor.visit_seq(SeqAccess::new(&mut self.list))?;
 

@@ -121,6 +121,49 @@ assert_eq!(
     },
 );
 ```
+
+# How it works
+
+Check out the kaydle [specification](https://github.com/Lucretiel/kaydle/blob/main/SPEC.md)
+for full details on how kaydle maps KDL to the serde data model. This section
+is a brief summary, and in particular tries to document what is and isn't
+implemented yet during these alpha releases.
+
+At a high level, kaydle treats KDL content as being made of up 3 different
+data structures:
+
+- A **node list** is a list of nodes- either a Document or Children. It maps to
+the serde data model as either a **sequence** of **named nodes** or a **mapping**
+of strings to **anonymous nodes**
+- A **named node** is a node that still has its name associated with it. Usually
+named nodes appear when deserializing a **node list** as a sequence. Kaydle
+required that named nodes "use" their name in some way- either the node name
+must match the name of the deserialized type, or (if it's an enum) it's used
+as the enum discriminant. A node name of "-" is treated the same as an
+**anonymous node**
+- An **anonymous node** is a node that doesn't have its name associated with it.
+This can happen because the node list is being deserialized as a mapping (so
+the name was used as a key), or because the name was used as an enum
+discriminant. **Anonymous nodes** can be treated as (most) primitive values,
+in which case they must contain a single argument and nothing else. They can
+alternatively be treated as sequences or maps, in which case the node must
+contain *only* arguments *or* properties *or* children (in the future it will
+be possible to use specially named struct fields to extract nodes with more
+than one of these).
+
+A KDL value maps directly to the serde data model in the ways you might expect
+(strings, booleans, null, strings, etc). Annotations are usually ignored;
+however, you can deserialize a value into a struct containing a field called
+`$kaydle::annotation` to retrieve the value annotation.
+
+# Unimplemented limitations
+
+- The major unimplemented thing at this point are most kaydle magics:
+`$kaydle::children`, `$kaydle::arguments`, etc. These will allow nodes
+containing mixes of children, arguments, and properties to be deserialized.
+- Anonymous nodes cannot yet be deserialized into enums. This will be handled
+by using the first argument as a discriminant.
+- Anonymous nodes cannot yet be deserialized into options.
 */
 
 mod annotation;
@@ -210,3 +253,5 @@ pub fn from_str<'a, T: de::Deserialize<'a>>(input: &'a str) -> Result<T, Error> 
     let deserializer = node_list::Deserializer::new(document);
     T::deserialize(deserializer)
 }
+
+pub use node_list::Deserializer;
