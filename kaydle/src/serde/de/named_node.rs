@@ -10,14 +10,24 @@ use super::{
     string::Deserializer as StringDeserializer, Error,
 };
 
+/// Deserializer for a named node.
 #[derive(Debug)]
 pub struct Deserializer<'i, 'p> {
     node: Annotated<'i, Node<'i, 'p, KdlString<'i>>>,
 }
 
 impl<'i, 'p> Deserializer<'i, 'p> {
+    /// Create a new Deserializer for a node with possible annotation.
     pub fn new(node: Annotated<'i, Node<'i, 'p, KdlString<'i>>>) -> Self {
         Self { node }
+    }
+
+    /// Create a Deserializer for an unannotated node.
+    pub fn new_unannotated(node: Node<'i, 'p, KdlString<'i>>) -> Self {
+        Self::new(Annotated {
+            item: node,
+            annotation: None,
+        })
     }
 
     /// Extract the name from `self.node` and return the rest of it as an

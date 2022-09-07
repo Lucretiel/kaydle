@@ -12,14 +12,24 @@ use super::{
     value::Deserializer as ValueDeserializer, Error,
 };
 
+/// Deserializer for an anonymous node.
 #[derive(Debug)]
 pub struct Deserializer<'i, 'p> {
     node: Annotated<'i, NodeContent<'i, 'p>>,
 }
 
 impl<'i, 'p> Deserializer<'i, 'p> {
+    /// Create a new Deserializer for a node with possible annotation.
     pub fn new(node: Annotated<'i, NodeContent<'i, 'p>>) -> Self {
         Self { node }
+    }
+
+    /// Create a Deserializer for an unannotated node.
+    pub fn new_unannotated(node: NodeContent<'i, 'p>) -> Self {
+        Self::new(Annotated {
+            item: node,
+            annotation: None,
+        })
     }
 
     /// Deserialize a single primitive value, like a number, string, unit,

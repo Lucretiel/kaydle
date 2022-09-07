@@ -254,4 +254,6 @@ pub fn from_str<'a, T: de::Deserialize<'a>>(input: &'a str) -> Result<T, Error> 
     T::deserialize(deserializer)
 }
 
+pub use anonymous_node::Deserializer as AnonymousNodeDeserializer;
+pub use named_node::Deserializer as NamedNodeDeserializer;
 pub use node_list::Deserializer;
