@@ -497,7 +497,12 @@ impl<'i> NodeList<'i> for Children<'i, '_> {
             )
         }
 
-        self.run_parser(parse_node_start(char('}').value(())))
+        let child_terminator = char('}')
+            .value(())
+            .precedes(parse_node_space.opt())
+            .precedes(parse_node_terminator);
+
+        self.run_parser(parse_node_start(child_terminator))
             .map(|opt_name| match opt_name {
                 // None here means that we successfully parsed the end-of-children. Inform the parent.
                 None => {
@@ -532,6 +537,12 @@ fn test_full_document_drain() {
         items {
             a /* An important note here */ "abc"
             d "def"; g "ghi"
+            z { a; b { c; }; }
+            node {
+                child1 {
+                    sub-child
+                }; child2
+            }
         }
     }
     (annotated)node2
@@ -543,4 +554,20 @@ fn test_full_document_drain() {
 
     let res: Result<DrainOutcome, nom::Err<()>> = processor.drain();
     assert_eq!(res.expect("parse error"), DrainOutcome::NotEmpty);
+}
+
+#[test]
+fn test_parse_child_error() {
+    let content = r##"
+    node {
+        child1 {
+            sub-child
+        } child2
+    }
+    "##;
+
+    assert!(matches!(
+        Document::new(content).drain(),
+        Err(nom::Err::Error(()))
+    ));
 }
