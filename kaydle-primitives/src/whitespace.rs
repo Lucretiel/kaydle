@@ -133,7 +133,8 @@ where
     let (input, _) = tag("//").parse(input)?;
     match input
         .char_indices()
-        .find_map(|(i, c)| is_newline(c).then(|| i))
+        .find(|&(_, c)| is_newline(c))
+        .map(|(i, _)| i)
     {
         None => Ok(("", ())),
         Some(i) => {

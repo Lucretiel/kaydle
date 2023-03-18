@@ -47,7 +47,6 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     where
         V: de::Visitor<'de>,
     {
-        // TODO: recursion limit. This will be handled by an adapter type
         // TODO: Nested Errors
         let value = visitor.visit_seq(SeqAccess::new(&mut self.list))?;
 
@@ -188,7 +187,7 @@ impl<'a, 'i, T: NodeList<'i>> MapAccess<'i, 'a, T> {
             Ok(Some(node)) => node,
         };
 
-        self.node = Some(GenericAnnotated {
+        self.node = Some(Annotated {
             annotation: node.annotation,
             item: node.item.content,
         });

@@ -36,7 +36,7 @@ impl<'i, 'p> Deserializer<'i, 'p> {
     fn become_anonymous(self) -> Result<AnonymousNodeDeserializer<'i, 'p>, Error> {
         let (name, node) = self.into_parts();
         (name == "-")
-            .then(|| node)
+            .then_some(node)
             .ok_or(Error::PrimitiveFromNamedNode)
     }
 }

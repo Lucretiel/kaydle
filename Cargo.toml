@@ -1,6 +1,21 @@
 [workspace]
-members = [
-    "kaydle",
-    "kaydle-primitives",
-    "kaydle-test",
-]
+members = ["kaydle", "kaydle-primitives", "kaydle-test"]
+
+[workspace.package]
+edition = "2021"
+authors = ["Nathan West <Lucretiel@gmail.com>"]
+readme = "README.md"
+license = "MPL-2.0"
+repository = "https://github.com/Lucretiel/kaydle"
+
+[workspace.dependencies]
+arrayvec = "0.7.2"
+cool_asserts = "1.1.1"
+lazy_format = "1.9.0"
+memchr = "2.5.0"
+nom = "7.1.1"
+nom-supreme = "0.8.0"
+serde = "1.0.157"
+serde-mobile = "3.0.0"
+thiserror = "1.0.26"
+anyhow = "1.0.70"

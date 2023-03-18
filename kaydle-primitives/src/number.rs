@@ -428,11 +428,39 @@ impl<'de> Deserialize<'de> for KdlNumber {
                 Ok(KdlNumber::Signed(value))
             }
 
+            fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let v = v.try_into().map_err(|_| {
+                    E::invalid_value(
+                        de::Unexpected::Other("an integer larger than 64 bits"),
+                        &self,
+                    )
+                })?;
+
+                self.visit_i64(v)
+            }
+
             fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
                 Ok(KdlNumber::Unsigned(value))
+            }
+
+            fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let v = v.try_into().map_err(|_| {
+                    E::invalid_value(
+                        de::Unexpected::Other("an integer larger than 64 bits"),
+                        &self,
+                    )
+                })?;
+
+                self.visit_u64(v)
             }
 
             fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>

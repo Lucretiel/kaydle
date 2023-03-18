@@ -2,14 +2,13 @@ use kaydle_primitives::{
     annotation::{Annotated, AnnotatedValue, RecognizedAnnotated, RecognizedAnnotationValue},
     node::{DrainOutcome, NodeContent, NodeEvent, NodeList},
     property::{Property, RecognizedProperty},
-    string::KdlString,
 };
 use serde::{de, Deserializer as _};
 use serde_mobile::SubordinateValue;
 
 use super::{
     node_list, string::Deserializer as StringDeserializer, util,
-    value::Deserializer as ValueDeserializer, Error,
+    value::annotated::Deserializer as ValueDeserializer, Error,
 };
 
 #[derive(Debug)]
@@ -476,8 +475,7 @@ struct PropertiesMapAccess<'i, 'a> {
 
 impl<'de, 'a> serde_mobile::MapKeyAccess<'de> for PropertiesMapAccess<'de, 'a> {
     type Error = Error;
-    type Value =
-        serde_mobile::SubordinateValue<ValueDeserializer<'de, Option<KdlString<'de>>>, Self>;
+    type Value = serde_mobile::SubordinateValue<ValueDeserializer<'de>, Self>;
 
     fn next_key_seed<S>(self, seed: S) -> Result<Option<(S::Value, Self::Value)>, Self::Error>
     where
