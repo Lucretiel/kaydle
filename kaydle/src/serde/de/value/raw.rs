@@ -1,21 +1,13 @@
 use std::marker::PhantomData;
 
+use derive_new::new;
 use kaydle_primitives::value::KdlValue;
 use serde::{de, forward_to_deserialize_any};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct Deserializer<'a, E> {
     value: KdlValue<'a>,
     error: PhantomData<E>,
-}
-
-impl<'a, E: de::Error> Deserializer<'a, E> {
-    pub fn new(value: KdlValue<'a>) -> Self {
-        Self {
-            value,
-            error: PhantomData,
-        }
-    }
 }
 
 impl<'de, E: de::Error> de::Deserializer<'de> for Deserializer<'de, E> {

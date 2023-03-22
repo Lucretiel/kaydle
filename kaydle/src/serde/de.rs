@@ -36,6 +36,7 @@ struct Document {
     number: i32,
     strings: Vec<String>,
     annotated: Vec<AnnotatedNumber>,
+    annotated_enums: Vec<IntOrString>,
     key_value: HashMap<char, i32>,
     enum_list: Vec<IntOrString>,
     properties: IntString,
@@ -51,6 +52,9 @@ let document: Document = kaydle::serde::from_str(r#"
     // but you can use a struct containing a field called $kaydle::annotation
     // to include it in deserialization
     annotated 1 (abc)2 (def)3
+
+    // Annotations can also be used as enum discriminants
+    annotated_enums (int)10 (string)"hello"
 
     // If a mapping type is deserialized (like a struct or HashMap), node names
     // are used as keys
@@ -100,6 +104,10 @@ assert_eq!(
                 annotation: Some("def".to_owned()),
                 value: 3,
             },
+        ]),
+        annotated_enums: Vec::from([
+            IntOrString::Int(10),
+            IntOrString::String("hello".to_owned()),
         ]),
         key_value: HashMap::from([
             ('a', 1),
@@ -152,9 +160,13 @@ be possible to use specially named struct fields to extract nodes with more
 than one of these).
 
 A KDL value maps directly to the serde data model in the ways you might expect
-(strings, booleans, null, strings, etc). Annotations are usually ignored;
-however, you can deserialize a value into a struct containing a field called
-`$kaydle::annotation` to retrieve the value annotation.
+(strings, booleans, null, strings, etc). Annotations are ignored by default,
+but they can be used in two places:
+- You can deserialize an annotated value into a struct containing a field called
+`$kaydle::annotation` to retrieve the value annotation. The struct should
+contain one additional field to store the value itself.
+- You can deserialize an annotated value into a newtype enum, in which case the
+annotation is used as an enum discriminant.
 
 # Unimplemented limitations
 
@@ -229,6 +241,10 @@ pub enum Error {
     /// The Deserialize type didn't consume the entire node
     #[error("sequence or map deserializer didn't consume the whole node")]
     UnfinishedNode,
+
+    /// A non-newtype enum was deserialized from an annotated value
+    #[error("only newtype variants can be deserialized from `(annotation)value` values")]
+    NonNewtypeFromAnnotatedValue,
 }
 
 impl From<nom::Err<()>> for Error {

@@ -1,4 +1,9 @@
-use kaydle_primitives::{annotation::AnnotatedValue, string::KdlString, value::KdlValue};
+use derive_new::new;
+use kaydle_primitives::{
+    annotation::{Annotated, AnnotatedValue},
+    string::KdlString,
+    value::KdlValue,
+};
 use serde::{
     de::{self, value::BorrowedStrDeserializer},
     forward_to_deserialize_any,
@@ -11,15 +16,9 @@ use crate::serde::{
 
 use super::raw;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct Deserializer<'a> {
     value: AnnotatedValue<'a>,
-}
-
-impl<'a> Deserializer<'a> {
-    pub fn new(value: AnnotatedValue<'a>) -> Self {
-        Self { value }
-    }
 }
 
 // TODO: most of this implementation should forward directly to
@@ -39,7 +38,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
         bytes byte_buf unit unit_struct seq tuple tuple_struct map
-        identifier  enum newtype_struct
+        identifier newtype_struct
     }
 
     #[inline]
@@ -58,6 +57,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         visitor.visit_unit()
     }
 
+    #[inline]
     fn deserialize_struct<V>(
         self,
         name: &'static str,
@@ -75,6 +75,19 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             _ if fields.contains(&magics::ANNOTATION) => Err(Error::InvalidAnnotatedValue),
             _ => raw::Deserializer::new(self.value.item).deserialize_struct(name, fields, visitor),
         }
+    }
+
+    #[inline]
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        visitor.visit_enum(EnumAccess::new(self.value))
     }
 }
 
@@ -171,5 +184,67 @@ impl<'de> serde_mobile::MapValueAccess<'de> for AnnotatedValueAccess<'de> {
                 .deserialize(raw::Deserializer::new(value))
                 .map(|value| (value, None)),
         }
+    }
+}
+
+#[derive(new)]
+struct EnumAccess<'i> {
+    value: AnnotatedValue<'i>,
+}
+
+impl<'de> de::EnumAccess<'de> for EnumAccess<'de> {
+    type Error = Error;
+    type Variant = VariantAccess<'de>;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        let Annotated { annotation, item } = self.value;
+
+        seed.deserialize(AnnotationDeserializer::new(annotation))
+            .map(|key| (key, VariantAccess::new(item)))
+    }
+}
+
+#[derive(new)]
+struct VariantAccess<'i> {
+    value: KdlValue<'i>,
+}
+
+impl<'de> de::VariantAccess<'de> for VariantAccess<'de> {
+    type Error = Error;
+
+    #[inline]
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        Err(Error::NonNewtypeFromAnnotatedValue)
+    }
+
+    #[inline]
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        seed.deserialize(raw::Deserializer::new(self.value))
+    }
+
+    #[inline]
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(Error::NonNewtypeFromAnnotatedValue)
+    }
+
+    #[inline]
+    fn struct_variant<V>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(Error::NonNewtypeFromAnnotatedValue)
     }
 }

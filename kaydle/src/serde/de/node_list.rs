@@ -1,7 +1,8 @@
 use std::{char::CharTryFromError, marker::PhantomData, ptr::NonNull};
 
+use derive_new::new;
 use kaydle_primitives::{
-    annotation::{Annotated, GenericAnnotated},
+    annotation::Annotated,
     node::{Document, DrainOutcome, NodeContent, NodeList},
     string::StringBuilder,
 };
@@ -108,14 +109,9 @@ impl<'de, T: NodeList<'de>> de::Deserializer<'de> for Deserializer<T> {
     }
 }
 
+#[derive(new)]
 pub struct SeqAccess<'a, L> {
     list: &'a mut L,
-}
-
-impl<'a, L> SeqAccess<'a, L> {
-    pub fn new(list: &'a mut L) -> Self {
-        Self { list }
-    }
 }
 
 impl<'de, L> de::SeqAccess<'de> for SeqAccess<'_, L>
